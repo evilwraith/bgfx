@@ -4,6 +4,11 @@
  */
 
 #include "bgfx_p.h"
+#include <cstdio>
+
+#if BX_PLATFORM_LINUX
+#include <gbm.h>
+#endif
 
 #if (BGFX_CONFIG_RENDERER_OPENGLES || BGFX_CONFIG_RENDERER_OPENGL)
 #	include "renderer_gl.h"
@@ -265,7 +270,54 @@ WL_EGL_IMPORT
 			}
 #	endif // BX_PLATFORM_WINDOWS
 
-			m_display = eglGetDisplay(NULL == ndt ? EGL_DEFAULT_DISPLAY : ndt);
+#include <stdlib.h> // for getenv
+
+			// Check if ndt is a GBM device (for KMSDRM/DRM rendering)
+			bool isGbmDevice = false;
+#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+			const char* useGbmEnv = getenv("BGFX_USE_GBM");
+			if (useGbmEnv && useGbmEnv[0] == '1')
+			{
+				isGbmDevice = true;
+				fprintf(stderr, "BGFX_GBM_PATCH [Init]: Detected GBM device via env. ndt=%p, nwh=%p\n", ndt, nwh);
+			}
+			else if (ndt != NULL)
+			{
+				// Fallback: If not explicitly set, but ndt is present, it *might* be GBM on this platform
+				// if we are not running X11. But for now, rely on BGFX_USE_GBM.
+			}
+#	endif
+
+			if (isGbmDevice)
+			{
+#	ifndef EGL_PLATFORM_GBM_KHR
+#	define EGL_PLATFORM_GBM_KHR 0x31D7
+#	endif
+
+				typedef EGLDisplay (*PFNEGLGETPLATFORMDISPLAYEXTPROC)(EGLenum platform, void *native_display, const EGLint *attrib_list);
+				PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT =
+					(PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
+
+				if (eglGetPlatformDisplayEXT)
+				{
+					fprintf(stderr, "BGFX_GBM_PATCH [Init]: Using eglGetPlatformDisplayEXT for GBM with ndt=%p\n", ndt);
+					m_display = eglGetPlatformDisplayEXT(EGL_PLATFORM_GBM_KHR, ndt, NULL);
+					if (m_display == EGL_NO_DISPLAY) {
+						EGLint err = eglGetError();
+						fprintf(stderr, "BGFX_GBM_PATCH [Init]: eglGetPlatformDisplayEXT failed with error 0x%x\n", err);
+					} else {
+						fprintf(stderr, "BGFX_GBM_PATCH [Init]: eglGetPlatformDisplayEXT success. m_display=%p\n", m_display);
+					}
+				}
+				else {
+					fprintf(stderr, "BGFX_GBM_PATCH [Init]: eglGetPlatformDisplayEXT NOT FOUND via eglGetProcAddress.\n");
+				}
+			}
+
+			if (m_display == EGL_NO_DISPLAY)
+			{
+				m_display = eglGetDisplay(NULL == ndt ? EGL_DEFAULT_DISPLAY : ndt);
+			}
 			BGFX_FATAL(m_display != EGL_NO_DISPLAY, Fatal::UnableToInitialize, "Failed to create display %p", m_display);
 
 			EGLint major = 0;
@@ -418,23 +470,32 @@ WL_EGL_IMPORT
 				attrs[numAttrs++] = EGL_SURFACE_TYPE;
 				attrs[numAttrs++] = headless ? EGL_PBUFFER_BIT : EGL_WINDOW_BIT;
 
+				// BGFX_GBM_PATCH: Relax constraints to find a matching config for the GBM surface
+				EGLint targetVisualId = EGL_DONT_CARE;
+
+				attrs[numAttrs++] = EGL_NATIVE_VISUAL_ID;
+				attrs[numAttrs++] = targetVisualId; /* EGL_DONT_CARE */
+
+				// If we are matching by Visual ID (implicitly), we should not enforce exact RGBA bits
+				// because the Visual ID implies them. Mismatch causes EGL_BAD_MATCH.
+				// We set these to 0 (minimum) to allow EGL to return all viable configs (both XRGB and ARGB).
 				attrs[numAttrs++] = EGL_BLUE_SIZE;
-				attrs[numAttrs++] = colorBlockInfo.bBits;
+				attrs[numAttrs++] = (isGbmDevice) ? 0 : colorBlockInfo.bBits;
 
 				attrs[numAttrs++] = EGL_GREEN_SIZE;
-				attrs[numAttrs++] = colorBlockInfo.gBits;
+				attrs[numAttrs++] = (isGbmDevice) ? 0 : colorBlockInfo.gBits;
 
 				attrs[numAttrs++] = EGL_RED_SIZE;
-				attrs[numAttrs++] = colorBlockInfo.rBits;
+				attrs[numAttrs++] = (isGbmDevice) ? 0 : colorBlockInfo.rBits;
 
 				attrs[numAttrs++] = EGL_ALPHA_SIZE;
-				attrs[numAttrs++] = colorBlockInfo.aBits;
+				attrs[numAttrs++] = (isGbmDevice) ? 0 : colorBlockInfo.aBits;
 
 				attrs[numAttrs++] = EGL_DEPTH_SIZE;
-				attrs[numAttrs++] = depthStecilBlockInfo.depthBits;
+				attrs[numAttrs++] = isGbmDevice ? 0 : depthStecilBlockInfo.depthBits;
 
 				attrs[numAttrs++] = EGL_STENCIL_SIZE;
-				attrs[numAttrs++] = depthStecilBlockInfo.stencilBits;
+				attrs[numAttrs++] = isGbmDevice ? 0 : depthStecilBlockInfo.stencilBits;
 
 				attrs[numAttrs++] = EGL_SAMPLES;
 				attrs[numAttrs++] = (EGLint)bx::min(msaaSamples, maxSamples);
@@ -452,13 +513,70 @@ WL_EGL_IMPORT
 					, BX_COUNTOF(attrs)
 					);
 
-				success = eglChooseConfig(m_display, attrs, &m_config, 1, &numConfigs);
+				// BGFX_GBM_PATCH: Try multiple configs to find one compatible with GBM surface
+				EGLConfig configs[256];
+				EGLint maxConfigs = 256;
 
-				if (!success
-				||  0 == numConfigs)
+				if (isGbmDevice) {
+					// For GBM/Mali, eglChooseConfig often fails to match the specific GBM surface properties.
+					// Instead, we fetch ALL available configs and brute-force test them.
+					if (!eglGetConfigs(m_display, configs, maxConfigs, &numConfigs)) {
+						BX_TRACE("eglGetConfigs failed");
+						numConfigs = 0;
+					}
+					fprintf(stderr, "BGFX_GBM_PATCH: Brute-force mode. Testing %d total system configs against surface...\n", numConfigs);
+				} else {
+					success = eglChooseConfig(m_display, attrs, configs, maxConfigs, &numConfigs);
+				}
+
+				if (0 == numConfigs)
 				{
 					msaaSamples = 0;
 					continue;
+				}
+
+				// Pick the first one for now, but we will iterate later if GBM fails
+				m_config = configs[0];
+
+				// Save all compatible configs if GBM is used, so we can retry surface creation
+				if (isGbmDevice) {
+					// We need to store these to try them in the surface creation block
+					// Since m_config is a single member, we can't easily store the array.
+					// Instead, we'll just try to create the surface HERE.
+					// For non-GBM paths, we just keep the first one.
+					if (nwh != NULL) {
+						bool foundWorking = false;
+						typedef EGLSurface (*PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC)(EGLDisplay dpy, EGLConfig config, void *native_window, const EGLint *attrib_list);
+						PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC eglCreatePlatformWindowSurfaceEXT =
+							(PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC)eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
+
+						if (eglCreatePlatformWindowSurfaceEXT) {
+							for (EGLint i = 0; i < numConfigs; ++i) {
+								EGLSurface testSurf = eglCreatePlatformWindowSurfaceEXT(m_display, configs[i], nwh, NULL);
+								if (testSurf != EGL_NO_SURFACE) {
+									fprintf(stderr, "BGFX_GBM_PATCH: Found working EGLConfig at index %d\n", i);
+									m_config = configs[i];
+									eglDestroySurface(m_display, testSurf);
+									foundWorking = true;
+									break;
+								} else {
+									EGLint err = eglGetError();
+									EGLint r, g, b, a, d, s, vid;
+									eglGetConfigAttrib(m_display, configs[i], EGL_RED_SIZE, &r);
+									eglGetConfigAttrib(m_display, configs[i], EGL_GREEN_SIZE, &g);
+									eglGetConfigAttrib(m_display, configs[i], EGL_BLUE_SIZE, &b);
+									eglGetConfigAttrib(m_display, configs[i], EGL_ALPHA_SIZE, &a);
+									eglGetConfigAttrib(m_display, configs[i], EGL_DEPTH_SIZE, &d);
+									eglGetConfigAttrib(m_display, configs[i], EGL_STENCIL_SIZE, &s);
+									eglGetConfigAttrib(m_display, configs[i], EGL_NATIVE_VISUAL_ID, &vid);
+									fprintf(stderr, "BGFX_GBM_PATCH: Config %d failed (Err: 0x%x). RGBA: %d%d%d%d DS: %d%d VID: 0x%x\n", i, err, r, g, b, a, d, s, vid);
+								}
+							}
+							if (!foundWorking) {
+								fprintf(stderr, "BGFX_GBM_PATCH: All eglChooseConfig results failed surface creation test.\n");
+							}
+						}
+					}
 				}
 
 				break;
@@ -540,7 +658,38 @@ WL_EGL_IMPORT
 				}
 #	endif // BX_PLATFORM_LINUX
 
-				m_surface = eglCreateWindowSurface(m_display, m_config, nwh, NULL);
+				// GBM/Mali specific: Use eglCreatePlatformWindowSurfaceEXT if available
+				bool created = false;
+#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+				const char* useGbmEnv = getenv("BGFX_USE_GBM");
+				if (useGbmEnv && useGbmEnv[0] == '1')
+				{
+					fprintf(stderr, "BGFX_GBM_PATCH: Enabled via env var. NDT=%p NWH=%p\n", ndt, nwh);
+					typedef EGLSurface (*PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC)(EGLDisplay dpy, EGLConfig config, void *native_window, const EGLint *attrib_list);
+					PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC eglCreatePlatformWindowSurfaceEXT =
+						(PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC)eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
+
+					if (eglCreatePlatformWindowSurfaceEXT)
+					{
+						fprintf(stderr, "BGFX_GBM_PATCH: Found eglCreatePlatformWindowSurfaceEXT at %p. Calling it...\n", eglCreatePlatformWindowSurfaceEXT);
+						m_surface = eglCreatePlatformWindowSurfaceEXT(m_display, m_config, nwh, NULL);
+						if (m_surface != EGL_NO_SURFACE) {
+							fprintf(stderr, "BGFX_GBM_PATCH: Surface successfully created: %p\n", m_surface);
+							created = true;
+						} else {
+							EGLint err = eglGetError();
+							fprintf(stderr, "BGFX_GBM_PATCH: eglCreatePlatformWindowSurfaceEXT failed! Error: 0x%x\n", err);
+						}
+					} else {
+						fprintf(stderr, "BGFX_GBM_PATCH: eglCreatePlatformWindowSurfaceEXT NOT FOUND via eglGetProcAddress.\n");
+					}
+				}
+#	endif // BX_PLATFORM_LINUX
+
+				if (!created)
+				{
+					m_surface = eglCreateWindowSurface(m_display, m_config, nwh, NULL);
+				}
 			}
 
 			BGFX_FATAL(m_surface != EGL_NO_SURFACE, Fatal::UnableToInitialize, "Failed to create surface.");
