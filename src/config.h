@@ -8,6 +8,16 @@
 
 #include <bx/bx.h> // bx::isPowerOf2
 
+#if BX_PLATFORM_LINUX
+// RK3588/ALP4K Specific: Enforce OpenGLES 3.2, Disable everything else
+#	undef BGFX_CONFIG_RENDERER_OPENGLES
+#	define BGFX_CONFIG_RENDERER_OPENGLES 32
+#	undef BGFX_CONFIG_RENDERER_OPENGL
+#	define BGFX_CONFIG_RENDERER_OPENGL 0
+#	undef BGFX_CONFIG_RENDERER_VULKAN
+#	define BGFX_CONFIG_RENDERER_VULKAN 0
+#endif
+
 // # Configuration options for bgfx.
 //
 // Any of `BGFX_CONFIG_*` options that's inside `#ifndef` block can be configured externally
@@ -38,7 +48,6 @@
 
 #	ifndef BGFX_CONFIG_RENDERER_DIRECT3D11
 #		define BGFX_CONFIG_RENDERER_DIRECT3D11 (0 \
-					|| BX_PLATFORM_LINUX          \
 					|| BX_PLATFORM_WINDOWS        \
 					|| BX_PLATFORM_WINRT          \
 					|| BX_PLATFORM_XBOXONE        \
@@ -47,7 +56,6 @@
 
 #	ifndef BGFX_CONFIG_RENDERER_DIRECT3D12
 #		define BGFX_CONFIG_RENDERER_DIRECT3D12 (0 \
-					|| BX_PLATFORM_LINUX          \
 					|| BX_PLATFORM_WINDOWS        \
 					|| BX_PLATFORM_WINRT          \
 					|| BX_PLATFORM_XBOXONE        \
@@ -80,7 +88,6 @@
 
 #	ifndef BGFX_CONFIG_RENDERER_OPENGL
 #		define BGFX_CONFIG_RENDERER_OPENGL (0 \
-					|| BX_PLATFORM_LINUX      \
 					|| BX_PLATFORM_WINDOWS    \
 					? BGFX_CONFIG_RENDERER_OPENGL_MIN_VERSION : 0)
 #	endif // BGFX_CONFIG_RENDERER_OPENGL
@@ -88,12 +95,14 @@
 #	ifndef BGFX_CONFIG_RENDERER_OPENGLES_MIN_VERSION
 #		define BGFX_CONFIG_RENDERER_OPENGLES_MIN_VERSION (0 \
 					|| BX_PLATFORM_ANDROID                  \
+					|| BX_PLATFORM_LINUX      \
 					? 30 : 1)
 #	endif // BGFX_CONFIG_RENDERER_OPENGLES_MIN_VERSION
 
 #	ifndef BGFX_CONFIG_RENDERER_OPENGLES
 #		define BGFX_CONFIG_RENDERER_OPENGLES (0 \
 					|| BX_PLATFORM_ANDROID      \
+					|| BX_PLATFORM_LINUX      \
 					|| BX_PLATFORM_EMSCRIPTEN   \
 					|| BX_PLATFORM_NX           \
 					|| BX_PLATFORM_RPI          \
@@ -103,7 +112,6 @@
 #	ifndef BGFX_CONFIG_RENDERER_VULKAN
 #		define BGFX_CONFIG_RENDERER_VULKAN (0 \
 					|| BX_PLATFORM_ANDROID    \
-					|| BX_PLATFORM_LINUX      \
 					|| BX_PLATFORM_NX         \
 					|| BX_PLATFORM_OSX        \
 					|| BX_PLATFORM_WINDOWS    \
@@ -114,7 +122,6 @@
 #		define BGFX_CONFIG_RENDERER_WEBGPU (0     \
 					/*|| BX_PLATFORM_EMSCRIPTEN*/ \
 					|| BX_PLATFORM_LINUX          \
-					|| BX_PLATFORM_OSX            \
 					|| BX_PLATFORM_WINDOWS        \
 					? 1 : 0)
 #	endif // BGFX_CONFIG_RENDERER_WEBGPU
