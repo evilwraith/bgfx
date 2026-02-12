@@ -9,6 +9,9 @@
 #	include <bx/pixelformat.h>
 #	include "renderer_vk.h"
 #	include "shader_spirv.h"
+#	if BX_PLATFORM_RK3588
+#		include <vector>
+#	endif
 
 #if BX_PLATFORM_OSX
 #	import <Cocoa/Cocoa.h>
@@ -391,6 +394,10 @@ VK_IMPORT_DEVICE
 			KHR_wayland_surface,
 			KHR_xlib_surface,
 			KHR_xcb_surface,
+#			if BX_PLATFORM_RK3588
+			KHR_display,
+			KHR_display_swapchain,
+#			endif
 #	elif BX_PLATFORM_WINDOWS
 			KHR_win32_surface,
 #	elif BX_PLATFORM_OSX
@@ -430,6 +437,10 @@ VK_IMPORT_DEVICE
 		{ VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,    1, false, false, true,                                                          Layer::Count },
 		{ VK_KHR_XLIB_SURFACE_EXTENSION_NAME,       1, false, false, true,                                                          Layer::Count },
 		{ VK_KHR_XCB_SURFACE_EXTENSION_NAME,        1, false, false, true,                                                          Layer::Count },
+#		if BX_PLATFORM_RK3588
+		{ VK_KHR_DISPLAY_EXTENSION_NAME,            1, false, false, true,                                                          Layer::Count },
+		{ VK_KHR_DISPLAY_SWAPCHAIN_EXTENSION_NAME,  1, false, false, true,                                                          Layer::Count },
+#		endif
 #	elif BX_PLATFORM_WINDOWS
 		{ VK_KHR_WIN32_SURFACE_EXTENSION_NAME,      1, false, false, true,                                                          Layer::Count },
 #	elif BX_PLATFORM_OSX
@@ -2473,7 +2484,20 @@ VK_IMPORT_DEVICE
 			return true;
 
 		error:
-			BX_TRACE("errorState %d", errorState);
+			const char* errorStateName = "Default";
+			switch (errorState)
+			{
+			case ErrorState::TimerQueryCreated:  errorStateName = "TimerQueryCreated"; break;
+			case ErrorState::DescriptorCreated: errorStateName = "DescriptorCreated"; break;
+			case ErrorState::SwapChainCreated:  errorStateName = "SwapChainCreated"; break;
+			case ErrorState::CommandQueueCreated: errorStateName = "CommandQueueCreated"; break;
+			case ErrorState::DeviceCreated:     errorStateName = "DeviceCreated"; break;
+			case ErrorState::InstanceCreated:   errorStateName = "InstanceCreated"; break;
+			case ErrorState::LoadedVulkan1:     errorStateName = "LoadedVulkan1"; break;
+			case ErrorState::Default:           errorStateName = "Default"; break;
+			}
+			BX_TRACE("Init error: errorState=%s (%d)", errorStateName, errorState);
+			BX_WARN(false, "Init error: errorState=%s (%d)", errorStateName, errorState);
 			switch (errorState)
 			{
 			case ErrorState::TimerQueryCreated:
@@ -7724,6 +7748,9 @@ retry:
 
 		const VkInstance instance = s_renderVK->m_instance;
 		const VkAllocationCallbacks* allocatorCb = s_renderVK->m_allocatorCb;
+#	if BX_PLATFORM_RK3588
+		BX_WARN(false, "Swapchain create start: surface=%p w=%u h=%u.", (void*)m_surface, m_resolution.width, m_resolution.height);
+#	endif
 
 #if BX_PLATFORM_WINDOWS
 		{
@@ -7754,8 +7781,152 @@ retry:
 		}
 #elif BX_PLATFORM_LINUX
 		{
+#		if BX_PLATFORM_RK3588
+			const VkPhysicalDevice physicalDevice = s_renderVK->m_physicalDevice;
+			const char* useDisplayEnv = getenv("VPX_KMSDRM_VULKAN_DISPLAY");
+			const bool useDisplay = useDisplayEnv && useDisplayEnv[0] == '1';
+
+			if (useDisplay && !s_extension[Extension::KHR_display].m_supported)
+			{
+				BX_WARN(false, "VK_KHR_display not supported on this device.");
+				return VK_ERROR_EXTENSION_NOT_PRESENT;
+			}
+			if (useDisplay && !s_extension[Extension::KHR_display_swapchain].m_supported)
+			{
+				BX_WARN(false, "VK_KHR_display_swapchain not supported on this device.");
+				return VK_ERROR_EXTENSION_NOT_PRESENT;
+			}
+
+			if (useDisplay && s_extension[Extension::KHR_display].m_supported)
+			{
+				PFN_vkGetPhysicalDeviceDisplayPropertiesKHR vkGetPhysicalDeviceDisplayPropertiesKHR =
+					(PFN_vkGetPhysicalDeviceDisplayPropertiesKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceDisplayPropertiesKHR");
+				PFN_vkGetDisplayModePropertiesKHR vkGetDisplayModePropertiesKHR =
+					(PFN_vkGetDisplayModePropertiesKHR)vkGetInstanceProcAddr(instance, "vkGetDisplayModePropertiesKHR");
+				PFN_vkGetPhysicalDeviceDisplayPlanePropertiesKHR vkGetPhysicalDeviceDisplayPlanePropertiesKHR =
+					(PFN_vkGetPhysicalDeviceDisplayPlanePropertiesKHR)vkGetInstanceProcAddr(instance, "vkGetPhysicalDeviceDisplayPlanePropertiesKHR");
+				PFN_vkGetDisplayPlaneSupportedDisplaysKHR vkGetDisplayPlaneSupportedDisplaysKHR =
+					(PFN_vkGetDisplayPlaneSupportedDisplaysKHR)vkGetInstanceProcAddr(instance, "vkGetDisplayPlaneSupportedDisplaysKHR");
+				PFN_vkCreateDisplayPlaneSurfaceKHR vkCreateDisplayPlaneSurfaceKHR =
+					(PFN_vkCreateDisplayPlaneSurfaceKHR)vkGetInstanceProcAddr(instance, "vkCreateDisplayPlaneSurfaceKHR");
+
+				if (nullptr != vkGetPhysicalDeviceDisplayPropertiesKHR
+				&&  nullptr != vkGetDisplayModePropertiesKHR
+				&&  nullptr != vkGetPhysicalDeviceDisplayPlanePropertiesKHR
+				&&  nullptr != vkGetDisplayPlaneSupportedDisplaysKHR
+				&&  nullptr != vkCreateDisplayPlaneSurfaceKHR)
+				{
+					uint32_t displayCount = 0;
+					VkResult displayResult = vkGetPhysicalDeviceDisplayPropertiesKHR(physicalDevice, &displayCount, nullptr);
+					if (VK_SUCCESS == displayResult && displayCount > 0)
+					{
+						std::vector<VkDisplayPropertiesKHR> displays(displayCount);
+						vkGetPhysicalDeviceDisplayPropertiesKHR(physicalDevice, &displayCount, displays.data());
+						VkDisplayKHR display = displays[0].display;
+
+						uint32_t modeCount = 0;
+						VkResult modeResult = vkGetDisplayModePropertiesKHR(physicalDevice, display, &modeCount, nullptr);
+						if (VK_SUCCESS == modeResult && modeCount > 0)
+						{
+							std::vector<VkDisplayModePropertiesKHR> modes(modeCount);
+							vkGetDisplayModePropertiesKHR(physicalDevice, display, &modeCount, modes.data());
+							VkDisplayModeKHR displayMode = modes[0].displayMode;
+							for (uint32_t ii = 0; ii < modeCount; ++ii)
+							{
+								const VkDisplayModeParametersKHR& params = modes[ii].parameters;
+								if (params.visibleRegion.width == s_renderVK->m_resolution.width
+								&&  params.visibleRegion.height == s_renderVK->m_resolution.height)
+								{
+									displayMode = modes[ii].displayMode;
+									break;
+								}
+							}
+
+							uint32_t planeCount = 0;
+							VkResult planeResult = vkGetPhysicalDeviceDisplayPlanePropertiesKHR(physicalDevice, &planeCount, nullptr);
+							if (VK_SUCCESS == planeResult && planeCount > 0)
+							{
+								std::vector<VkDisplayPlanePropertiesKHR> planes(planeCount);
+								vkGetPhysicalDeviceDisplayPlanePropertiesKHR(physicalDevice, &planeCount, planes.data());
+								uint32_t planeIndex = 0;
+								bool planeFound = false;
+								for (uint32_t pi = 0; pi < planeCount && !planeFound; ++pi)
+								{
+									uint32_t supportedCount = 0;
+									vkGetDisplayPlaneSupportedDisplaysKHR(physicalDevice, pi, &supportedCount, nullptr);
+									if (supportedCount == 0)
+										continue;
+									std::vector<VkDisplayKHR> supportedDisplays(supportedCount);
+									vkGetDisplayPlaneSupportedDisplaysKHR(physicalDevice, pi, &supportedCount, supportedDisplays.data());
+									for (uint32_t di = 0; di < supportedCount; ++di)
+									{
+										if (supportedDisplays[di] == display)
+										{
+											planeIndex = pi;
+											planeFound = true;
+											break;
+										}
+									}
+								}
+
+								if (planeFound)
+								{
+									VkDisplaySurfaceCreateInfoKHR sci;
+									sci.sType = VK_STRUCTURE_TYPE_DISPLAY_SURFACE_CREATE_INFO_KHR;
+									sci.pNext = NULL;
+									sci.flags = 0;
+									sci.displayMode = displayMode;
+									sci.planeIndex = planeIndex;
+									sci.planeStackIndex = planes[planeIndex].currentStackIndex;
+									sci.transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+									sci.globalAlpha = 1.0f;
+									sci.alphaMode = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
+									sci.imageExtent.width = s_renderVK->m_resolution.width;
+									sci.imageExtent.height = s_renderVK->m_resolution.height;
+									result = vkCreateDisplayPlaneSurfaceKHR(instance, &sci, allocatorCb, &m_surface);
+									BX_WARN(VK_SUCCESS == result, "vkCreateDisplayPlaneSurfaceKHR failed %d: %s.", result, getName(result) );
+								}
+								else
+								{
+									BX_WARN(false, "No display plane supports the selected display.");
+								}
+							}
+							else
+							{
+								BX_WARN(false, "No display planes found (result %d: %s).", planeResult, getName(planeResult));
+							}
+						}
+						else
+						{
+							BX_WARN(false, "No display modes found (result %d: %s).", modeResult, getName(modeResult));
+						}
+					}
+					else
+					{
+						BX_WARN(false, "No displays found (result %d: %s).", displayResult, getName(displayResult));
+					}
+				}
+				else
+				{
+					BX_WARN(false, "VK_KHR_display entry points missing.");
+				}
+			}
+
+			if (VK_SUCCESS != result)
+			{
+				if (useDisplay)
+				{
+					BX_WARN(false, "vkCreateDisplayPlaneSurfaceKHR failed %d: %s.", result, getName(result) );
+					return result;
+				}
+			}
+#		endif
+
 			if (g_platformData.type == bgfx::NativeWindowHandleType::Wayland)
 			{
+#			if BX_PLATFORM_RK3588
+				BX_WARN(false, "Wayland surface path selected: ndt=%p nwh=%p.", g_platformData.ndt, m_nwh);
+#			endif
 				if (s_extension[Extension::KHR_wayland_surface].m_supported
 				&&  NULL != vkCreateWaylandSurfaceKHR
 				   )
@@ -7768,6 +7939,9 @@ retry:
 					sci.display = (wl_display*)g_platformData.ndt;
 					sci.surface = (wl_surface*)m_nwh;
 					result = vkCreateWaylandSurfaceKHR(instance, &sci, allocatorCb, &m_surface);
+#					if BX_PLATFORM_RK3588
+					BX_WARN(false, "Wayland surface create result=%d: %s.", result, getName(result));
+#					endif
 					BX_WARN(VK_SUCCESS == result, "vkCreateWaylandSurfaceKHR failed %d: %s.", result, getName(result) );
 				}
 			}
@@ -7903,6 +8077,9 @@ retry:
 	VkResult SwapChainVK::createSwapChain()
 	{
 		BGFX_PROFILER_SCOPE("SwapChainVK::createSwapchain", kColorFrame);
+#		if BX_PLATFORM_RK3588
+		BX_WARN(false, "Swapchain create start: surface=%p w=%u h=%u.", (void*)m_surface, m_resolution.width, m_resolution.height);
+#		endif
 
 		VkResult result = VK_SUCCESS;
 

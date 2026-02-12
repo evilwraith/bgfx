@@ -306,9 +306,10 @@ WL_EGL_IMPORT
 
 			// Check if ndt is a GBM device (for KMSDRM/DRM rendering)
 			bool isGbmDevice = false;
-#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+#	if BX_PLATFORM_RK3588
 			const char* useGbmEnv = getenv("BGFX_USE_GBM");
-			if (useGbmEnv && useGbmEnv[0] == '1')
+			const bool useGbm = (NULL == useGbmEnv) || (useGbmEnv[0] == '1');
+			if (useGbm)
 			{
 				isGbmDevice = true;
 				fprintf(stderr, "BGFX_GBM_PATCH [Init]: Detected GBM device via env. ndt=%p, nwh=%p\n", ndt, nwh);
@@ -318,13 +319,12 @@ WL_EGL_IMPORT
 				// Fallback: If not explicitly set, but ndt is present, it *might* be GBM on this platform
 				// if we are not running X11. But for now, rely on BGFX_USE_GBM.
 			}
-#	endif
 
 			if (isGbmDevice)
 			{
-#	ifndef EGL_PLATFORM_GBM_KHR
-#	define EGL_PLATFORM_GBM_KHR 0x31D7
-#	endif
+#			ifndef EGL_PLATFORM_GBM_KHR
+#			define EGL_PLATFORM_GBM_KHR 0x31D7
+#			endif
 
 				typedef EGLDisplay (*PFNEGLGETPLATFORMDISPLAYEXTPROC)(EGLenum platform, void *native_display, const EGLint *attrib_list);
 				PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT =
@@ -345,6 +345,7 @@ WL_EGL_IMPORT
 					fprintf(stderr, "BGFX_GBM_PATCH [Init]: eglGetPlatformDisplayEXT NOT FOUND via eglGetProcAddress.\n");
 				}
 			}
+#	endif
 
 			if (m_display == EGL_NO_DISPLAY)
 			{
@@ -549,6 +550,7 @@ WL_EGL_IMPORT
 				EGLConfig configs[256];
 				EGLint maxConfigs = 256;
 
+#			if BX_PLATFORM_RK3588
 				if (isGbmDevice) {
 					// For GBM/Mali, eglChooseConfig often fails to match the specific GBM surface properties.
 					// Instead, we fetch ALL available configs and brute-force test them.
@@ -560,6 +562,9 @@ WL_EGL_IMPORT
 				} else {
 					success = eglChooseConfig(m_display, attrs, configs, maxConfigs, &numConfigs);
 				}
+#			else
+				success = eglChooseConfig(m_display, attrs, configs, maxConfigs, &numConfigs);
+#			endif
 
 				if (0 == numConfigs)
 				{
@@ -571,6 +576,7 @@ WL_EGL_IMPORT
 				m_config = configs[0];
 
 				// Save all compatible configs if GBM is used, so we can retry surface creation
+#			if BX_PLATFORM_RK3588
 				if (isGbmDevice) {
 					// We need to store these to try them in the surface creation block
 					// Since m_config is a single member, we can't easily store the array.
@@ -610,6 +616,7 @@ WL_EGL_IMPORT
 						}
 					}
 				}
+#			endif
 
 				break;
 			}
@@ -692,9 +699,10 @@ WL_EGL_IMPORT
 
 				// GBM/Mali specific: Use eglCreatePlatformWindowSurfaceEXT if available
 				bool created = false;
-#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+#	if BX_PLATFORM_RK3588
 				const char* useGbmEnv = getenv("BGFX_USE_GBM");
-				if (useGbmEnv && useGbmEnv[0] == '1')
+				const bool useGbm = (NULL == useGbmEnv) || (useGbmEnv[0] == '1');
+				if (useGbm)
 				{
 					fprintf(stderr, "BGFX_GBM_PATCH: Enabled via env var. NDT=%p NWH=%p\n", ndt, nwh);
 					typedef EGLSurface (*PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC)(EGLDisplay dpy, EGLConfig config, void *native_window, const EGLint *attrib_list);
@@ -716,7 +724,7 @@ WL_EGL_IMPORT
 						fprintf(stderr, "BGFX_GBM_PATCH: eglCreatePlatformWindowSurfaceEXT NOT FOUND via eglGetProcAddress.\n");
 					}
 				}
-#	endif // BX_PLATFORM_LINUX
+#	endif // BX_PLATFORM_RK3588
 
 				if (!created)
 				{
