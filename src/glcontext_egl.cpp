@@ -272,6 +272,38 @@ WL_EGL_IMPORT
 
 #include <stdlib.h> // for getenv
 
+			// Prefer explicit Wayland display creation when requested by the platform data.
+#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+			if (g_platformData.type == NativeWindowHandleType::Wayland)
+			{
+#			ifndef EGL_PLATFORM_WAYLAND_KHR
+#			define EGL_PLATFORM_WAYLAND_KHR 0x31D8
+#			endif
+				typedef EGLDisplay (*PFNEGLGETPLATFORMDISPLAYEXTPROC)(EGLenum platform, void *native_display, const EGLint *attrib_list);
+				PFNEGLGETPLATFORMDISPLAYEXTPROC eglGetPlatformDisplayEXT =
+					(PFNEGLGETPLATFORMDISPLAYEXTPROC)eglGetProcAddress("eglGetPlatformDisplayEXT");
+
+				if (eglGetPlatformDisplayEXT)
+				{
+					fprintf(stderr, "BGFX_WAYLAND_PATCH [Init]: Using eglGetPlatformDisplayEXT for Wayland with ndt=%p\n", ndt);
+					m_display = eglGetPlatformDisplayEXT(EGL_PLATFORM_WAYLAND_KHR, ndt, NULL);
+					if (m_display == EGL_NO_DISPLAY)
+					{
+						EGLint err = eglGetError();
+						fprintf(stderr, "BGFX_WAYLAND_PATCH [Init]: eglGetPlatformDisplayEXT failed with error 0x%x\n", err);
+					}
+					else
+					{
+						fprintf(stderr, "BGFX_WAYLAND_PATCH [Init]: eglGetPlatformDisplayEXT success. m_display=%p\n", m_display);
+					}
+				}
+				else
+				{
+					fprintf(stderr, "BGFX_WAYLAND_PATCH [Init]: eglGetPlatformDisplayEXT NOT FOUND via eglGetProcAddress.\n");
+				}
+			}
+#	endif
+
 			// Check if ndt is a GBM device (for KMSDRM/DRM rendering)
 			bool isGbmDevice = false;
 #	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
