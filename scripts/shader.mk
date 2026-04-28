@@ -15,8 +15,8 @@ ifndef TARGET
 .PHONY: all
 all:
 	@echo Usage: make TARGET=# [clean, all, rebuild]
-	@echo "  TARGET=0 (hlsl  - d3d11 / Windows only!)"
-	@echo "  TARGET=1 (hlsl  - d3d11 / Windows only!)"
+	@echo "  TARGET=0 (dxil  - d3d12)"
+	@echo "  TARGET=1 (dxbc  - d3d11)"
 	@echo "  TARGET=3 (essl  - android)"
 	@echo "  TARGET=4 (glsl)"
 	@echo "  TARGET=5 (metal)"
@@ -53,11 +53,17 @@ else
 
 ADDITIONAL_INCLUDES?=
 
-ifeq ($(TARGET), $(filter $(TARGET), 0 1))
+ifeq ($(TARGET), $(filter $(TARGET), 0))
+VS_FLAGS=--platform windows -p s_6_0 -O 3
+FS_FLAGS=--platform windows -p s_6_0 -O 3
+CS_FLAGS=--platform windows -p s_6_0 -O 3
+SHADER_PATH=shaders/dxil
+else
+ifeq ($(TARGET), $(filter $(TARGET), 1))
 VS_FLAGS=--platform windows -p s_5_0 -O 3
 FS_FLAGS=--platform windows -p s_5_0 -O 3
 CS_FLAGS=--platform windows -p s_5_0 -O 1
-SHADER_PATH=shaders/dx11
+SHADER_PATH=shaders/dxbc
 else
 ifeq ($(TARGET), $(filter $(TARGET), 2 3))
 VS_FLAGS=--platform android -p 100_es
@@ -101,6 +107,7 @@ endif
 endif
 endif
 endif
+endif
 
 THISDIR := $(dir $(lastword $(MAKEFILE_LIST)))
 VS_FLAGS+=-i $(THISDIR)../src/ $(ADDITIONAL_INCLUDES)
@@ -126,7 +133,7 @@ CS_BIN = $(addprefix $(BUILD_INTERMEDIATE_DIR)/, $(addsuffix .bin, $(basename $(
 BIN = $(VS_BIN) $(FS_BIN) $(CS_BIN)
 ASM = $(VS_ASM) $(FS_ASM)
 
-ifeq ($(TARGET), $(filter $(TARGET),1 3 4 5 6 7))
+ifeq ($(TARGET), $(filter $(TARGET),1 3 4 5 6 7 8))
 BIN += $(CS_BIN)
 ASM += $(CS_ASM)
 endif

@@ -5,6 +5,8 @@
 
 #include "shaderc.h"
 
+#if SHADERC_CONFIG_HAS_GLSLANG
+
 #include <iostream> // std::cout
 
 BX_PRAGMA_DIAGNOSTIC_PUSH()
@@ -60,8 +62,6 @@ namespace bgfx
 namespace stl = tinystl;
 
 #include "../../src/shader.h"
-#include "../../src/shader_spirv.h"
-#include "../../3rdparty/khronos/vulkan-local/vulkan.h"
 
 namespace bgfx { namespace spirv
 {
@@ -900,3 +900,18 @@ namespace bgfx { namespace spirv
 	}
 
 } // namespace bgfx
+
+#else // SHADERC_HAS_GLSLANG
+
+namespace bgfx
+{
+	bool compileSPIRVShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _shaderWriter, bx::WriterI* _messageWriter)
+	{
+		BX_UNUSED(_options, _version, _code, _shaderWriter);
+		bx::Error messageErr;
+		bx::write(_messageWriter, &messageErr, "SPIRV compiler (glslang, spirv-cross and spirv-tools) is not compiled in.\n");
+		return false;
+	}
+} // namespace bgfx
+
+#endif // SHADERC_HAS_GLSLANG

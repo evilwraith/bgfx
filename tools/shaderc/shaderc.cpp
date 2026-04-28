@@ -21,7 +21,7 @@ extern "C"
 #define BGFX_CHUNK_MAGIC_VSH BX_MAKEFOURCC('V', 'S', 'H', BGFX_SHADER_BIN_VERSION)
 
 #define BGFX_SHADERC_VERSION_MAJOR 1
-#define BGFX_SHADERC_VERSION_MINOR 18
+#define BGFX_SHADERC_VERSION_MINOR 19
 
 namespace bgfx
 {
@@ -38,6 +38,7 @@ namespace bgfx
 			PSSL,
 			SpirV,
 			WGSL,
+			Dxil,
 
 			Count
 		};
@@ -51,7 +52,8 @@ namespace bgfx
 		"Metal Shading Language (MSL)",
 		"PlayStation Shader Language (PSSL)",
 		"Standard Portable Intermediate Representation - V (SPIR-V)",
-		"WGSL",
+		"WebGPU Shading Language (WGSL)",
+		"DirectX Intermediate Language (DXIL)",
 
 		"Unknown?!"
 	};
@@ -125,6 +127,16 @@ namespace bgfx
 		{  ShadingLang::ESSL,  320,    "320_es"     },
 		{  ShadingLang::HLSL,  400,    "s_4_0"      },
 		{  ShadingLang::HLSL,  500,    "s_5_0"      },
+		{  ShadingLang::Dxil,  600,    "s_6_0"      },
+		{  ShadingLang::Dxil,  610,    "s_6_1"      },
+		{  ShadingLang::Dxil,  620,    "s_6_2"      },
+		{  ShadingLang::Dxil,  630,    "s_6_3"      },
+		{  ShadingLang::Dxil,  640,    "s_6_4"      },
+		{  ShadingLang::Dxil,  650,    "s_6_5"      },
+		{  ShadingLang::Dxil,  660,    "s_6_6"      },
+		{  ShadingLang::Dxil,  670,    "s_6_7"      },
+		{  ShadingLang::Dxil,  680,    "s_6_8"      },
+		{  ShadingLang::Dxil,  690,    "s_6_9"      },
 		{  ShadingLang::Metal, 1210,   "metal"      },
 		{  ShadingLang::Metal, 1000,   "metal10-10" },
 		{  ShadingLang::Metal, 1110,   "metal11-10" },
@@ -309,16 +321,6 @@ namespace bgfx
 		NULL
 	};
 
-	const char* s_uniformTypeName[] =
-	{
-		"int",  "int",
-		NULL,   NULL,
-		"vec4", "float4",
-		"mat3", "float3x3",
-		"mat4", "float4x4",
-	};
-	static_assert(BX_COUNTOF(s_uniformTypeName) == UniformType::Count*2);
-
 	static const char* s_allowedVertexShaderInputs[] =
 	{
 		"a_position",
@@ -461,7 +463,8 @@ namespace bgfx
 		{
 			return "linear";
 		}
-		else if (0 == bx::strCmp(_glsl, "flat") )
+
+		if (0 == bx::strCmp(_glsl, "flat") )
 		{
 			return "nointerpolation";
 		}
@@ -469,12 +472,22 @@ namespace bgfx
 		return _glsl; // centroid, noperspective
 	}
 
+	const char* s_uniformTypeName[] =
+	{
+		"int",  "int",
+		NULL,   NULL,
+		"vec4", "float4",
+		"mat3", "float3x3",
+		"mat4", "float4x4",
+	};
+	static_assert(BX_COUNTOF(s_uniformTypeName) == UniformType::Count*2);
+
 	const char* getUniformTypeName(UniformType::Enum _enum)
 	{
-		uint32_t idx = _enum & ~(kUniformFragmentBit|kUniformSamplerBit);
+		const uint32_t idx = _enum & ~(kUniformFragmentBit|kUniformSamplerBit);
 		if (idx < UniformType::Count)
 		{
-			return s_uniformTypeName[idx];
+			return s_uniformTypeName[idx*2+0];
 		}
 
 		return "Unknown uniform type?!";
@@ -485,7 +498,7 @@ namespace bgfx
 		for (uint32_t ii = 0; ii < UniformType::Count*2; ++ii)
 		{
 			if (NULL != s_uniformTypeName[ii]
-			&&  0 == bx::strCmp(_name, s_uniformTypeName[ii]) )
+			&&     0 == bx::strCmp(_name, s_uniformTypeName[ii]) )
 			{
 				return UniformType::Enum(ii/2);
 			}
@@ -787,8 +800,10 @@ namespace bgfx
 		return NULL;
 	}
 
-	bx::StringView strFindUncommented(const bx::StringView &_str, const bx::StringView& _find, int32_t _num = INT32_MAX)
+	bx::StringView strFindUncommented(bool _keepcomments, const bx::StringView &_str, const bx::StringView& _find, int32_t _num = INT32_MAX)
 	{
+		if (!_keepcomments) return bx::strFind(_str, _find, _num);
+
 		int32_t len = bx::min(_find.getLength(), _num);
 
 		const char* ptr = strFindUncommented(
@@ -1285,8 +1300,9 @@ namespace bgfx
 		preprocessor.setDefaultDefine("BX_PLATFORM_XBOXONE");
 
 		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_GLSL");
-		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_ESSL");	
+		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_ESSL");
 		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_HLSL");
+		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_DXIL");
 		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_METAL");
 		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_PSSL");
 		preprocessor.setDefaultDefine("BGFX_SHADER_LANGUAGE_SPIRV");
@@ -1299,6 +1315,7 @@ namespace bgfx
 		char glslDefine[128] = { '\0' };
 		char esslDefine[128] = { '\0' };
 		char hlslDefine[128] = { '\0' };
+		char dxilDefine[128] = { '\0' };
 
 		if (profile->lang == ShadingLang::GLSL
 		||  profile->lang == ShadingLang::ESSL)
@@ -1317,11 +1334,20 @@ namespace bgfx
 			}
 		}
 
-		if (profile->lang == ShadingLang::HLSL)
+		if (profile->lang == ShadingLang::HLSL
+		||  profile->lang == ShadingLang::Dxil)
 		{
 			bx::snprintf(hlslDefine, BX_COUNTOF(hlslDefine)
 				, "BGFX_SHADER_LANGUAGE_HLSL=%d"
 				, profile->id);
+
+			if (profile->lang == ShadingLang::Dxil)
+			{
+				bx::snprintf(dxilDefine, BX_COUNTOF(dxilDefine)
+					, "BGFX_SHADER_LANGUAGE_DXIL=%d"
+					, profile->id
+					);
+			}
 		}
 
 		const char* platform = _options.platform.c_str();
@@ -1403,9 +1429,11 @@ namespace bgfx
 		else if (0 == bx::strCmpI(platform, "windows") )
 		{
 			preprocessor.setDefine("BX_PLATFORM_WINDOWS=1");
-			if (profile->lang == ShadingLang::HLSL)
+			if (profile->lang == ShadingLang::HLSL
+			||  profile->lang == ShadingLang::Dxil)
 			{
 				preprocessor.setDefine(hlslDefine);
+				preprocessor.setDefine(dxilDefine);
 			}
 			else if (profile->lang == ShadingLang::GLSL
 			     ||  profile->lang == ShadingLang::ESSL)
@@ -1430,9 +1458,11 @@ namespace bgfx
 		}
 		else
 		{
-			if (profile->lang == ShadingLang::HLSL)
+			if (profile->lang == ShadingLang::HLSL
+			||  profile->lang == ShadingLang::Dxil)
 			{
 				preprocessor.setDefine(hlslDefine);
+				preprocessor.setDefine(dxilDefine);
 			}
 			else if (profile->lang == ShadingLang::GLSL
 			     ||  profile->lang == ShadingLang::ESSL)
@@ -1550,13 +1580,6 @@ namespace bgfx
 					var.m_type.assign(typen.getPtr(), typen.getTerm() );
 					var.m_name.assign(name.getPtr(), name.getTerm() );
 					var.m_semantics.assign(semantics.getPtr(), semantics.getTerm() );
-
-					if (profile->lang == ShadingLang::HLSL
-					&&  profile->id < 400
-					&&  var.m_semantics == "BITANGENT")
-					{
-						var.m_semantics = "BINORMAL";
-					}
 
 					if (!init.isEmpty() )
 					{
@@ -1710,6 +1733,10 @@ namespace bgfx
 			{
 				compiled = compileWgslShader(_options, profile->id, input, _shaderWriter, _messageWriter);
 			}
+			else if (profile->lang == ShadingLang::Dxil)
+			{
+				compiled = compileDxilShader(_options, profile->id, input, _shaderWriter, _messageWriter);
+			}
 			else
 			{
 				compiled = compileHLSLShader(_options, profile->id, input, _shaderWriter, _messageWriter);
@@ -1717,7 +1744,7 @@ namespace bgfx
 		}
 		else if ('c' == _options.shaderType) // Compute
 		{
-			bx::StringView entry = strFindUncommented(input, "void main()");
+			bx::StringView entry = strFindUncommented(_options.keepComments, input, "void main()");
 			if (entry.isEmpty() )
 			{
 				bx::write(_messageWriter, &messageErr, "Shader entry point 'void main()' is not found.\n");
@@ -1760,10 +1787,10 @@ namespace bgfx
 
 					uint32_t arg = 0;
 
-					const bool hasLocalInvocationID    = !strFindUncommented(input, "gl_LocalInvocationID").isEmpty();
-					const bool hasLocalInvocationIndex = !strFindUncommented(input, "gl_LocalInvocationIndex").isEmpty();
-					const bool hasGlobalInvocationID   = !strFindUncommented(input, "gl_GlobalInvocationID").isEmpty();
-					const bool hasWorkGroupID          = !strFindUncommented(input, "gl_WorkGroupID").isEmpty();
+					const bool hasLocalInvocationID    = !strFindUncommented(_options.keepComments, input, "gl_LocalInvocationID").isEmpty();
+					const bool hasLocalInvocationIndex = !strFindUncommented(_options.keepComments, input, "gl_LocalInvocationIndex").isEmpty();
+					const bool hasGlobalInvocationID   = !strFindUncommented(_options.keepComments, input, "gl_GlobalInvocationID").isEmpty();
+					const bool hasWorkGroupID          = !strFindUncommented(_options.keepComments, input, "gl_WorkGroupID").isEmpty();
 
 					if (hasLocalInvocationID)
 					{
@@ -1871,6 +1898,10 @@ namespace bgfx
 							{
 								compiled = compileWgslShader(_options, profile->id, code, _shaderWriter, _messageWriter);
 							}
+							else if (profile->lang == ShadingLang::Dxil)
+							{
+								compiled = compileDxilShader(_options, profile->id, code, _shaderWriter, _messageWriter);
+							}
 							else
 							{
 								compiled = compileHLSLShader(_options, profile->id, code, _shaderWriter, _messageWriter);
@@ -1898,7 +1929,7 @@ namespace bgfx
 		else // Vertex/Fragment
 		{
 			bx::StringView shader(input);
-			bx::StringView entry = strFindUncommented(shader, "void main()");
+			bx::StringView entry = strFindUncommented(_options.keepComments, shader, "void main()");
 			if (entry.isEmpty() )
 			{
 				bx::write(_messageWriter, &messageErr, "Shader entry point 'void main()' is not found.\n");
@@ -1922,14 +1953,14 @@ namespace bgfx
 					if (profile->lang == ShadingLang::ESSL
 					&&  profile->id >= 300)
 					{
-						const bool hasFragColor   = !strFindUncommented(input, "gl_FragColor").isEmpty();
+						const bool hasFragColor   = !strFindUncommented(_options.keepComments, input, "gl_FragColor").isEmpty();
 						bool hasFragData[8] = {};
 						uint32_t numFragData = 0;
 						for (uint32_t ii = 0; ii < BX_COUNTOF(hasFragData); ++ii)
 						{
 							char temp[32];
 							bx::snprintf(temp, BX_COUNTOF(temp), "gl_FragData[%d]", ii);
-							hasFragData[ii] = !strFindUncommented(input, temp).isEmpty();
+							hasFragData[ii] = !strFindUncommented(_options.keepComments, input, temp).isEmpty();
 							numFragData += hasFragData[ii];
 						}
 						if (hasFragColor)
@@ -2015,32 +2046,21 @@ namespace bgfx
 						"#define mat4 float4x4\n"
 						);
 
-					if (profile->lang == ShadingLang::HLSL
-					&&  profile->id < 400)
-					{
-						preprocessor.writef(
-							"#define centroid\n"
-							"#define flat\n"
-							"#define noperspective\n"
-							"#define smooth\n"
-							);
-					}
-
 					*const_cast<char*>(entry.getPtr() + 4) = '_';
 
 					if ('f' == _options.shaderType)
 					{
-						bx::StringView insert = strFindUncommented(bx::StringView(entry.getPtr(), shader.getTerm() ), "{");
+						bx::StringView insert = strFindUncommented(_options.keepComments, bx::StringView(entry.getPtr(), shader.getTerm() ), "{");
 						if (!insert.isEmpty() )
 						{
 							insert = strInsert(const_cast<char*>(insert.getPtr()+1), "\nvec4 bgfx_VoidFrag = vec4_splat(0.0);\n");
 						}
 
-						const bool hasFragColor   = !strFindUncommented(input, "gl_FragColor").isEmpty();
-						const bool hasFragCoord   = !strFindUncommented(input, "gl_FragCoord").isEmpty() || profile->id >= 400;
-						const bool hasFragDepth   = !strFindUncommented(input, "gl_FragDepth").isEmpty();
-						const bool hasFrontFacing = !strFindUncommented(input, "gl_FrontFacing").isEmpty();
-						const bool hasPrimitiveId = !strFindUncommented(input, "gl_PrimitiveID").isEmpty() && BGFX_CAPS_PRIMITIVE_ID;
+						const bool hasFragColor   = !strFindUncommented(_options.keepComments, input, "gl_FragColor").isEmpty();
+						const bool hasFragCoord   = !strFindUncommented(_options.keepComments, input, "gl_FragCoord").isEmpty() || profile->id >= 400;
+						const bool hasFragDepth   = !strFindUncommented(_options.keepComments, input, "gl_FragDepth").isEmpty();
+						const bool hasFrontFacing = !strFindUncommented(_options.keepComments, input, "gl_FrontFacing").isEmpty();
+						const bool hasPrimitiveId = !strFindUncommented(_options.keepComments, input, "gl_PrimitiveID").isEmpty() && BGFX_CAPS_PRIMITIVE_ID;
 
 						if (!hasPrimitiveId)
 						{
@@ -2053,7 +2073,7 @@ namespace bgfx
 						{
 							char temp[32];
 							bx::snprintf(temp, BX_COUNTOF(temp), "gl_FragData[%d]", ii);
-							hasFragData[ii] = !strFindUncommented(input, temp).isEmpty();
+							hasFragData[ii] = !strFindUncommented(_options.keepComments, input, temp).isEmpty();
 							numFragData += hasFragData[ii];
 						}
 
@@ -2178,12 +2198,12 @@ namespace bgfx
 					}
 					else if ('v' == _options.shaderType)
 					{
-						const bool hasVertexId   = !strFindUncommented(input, "gl_VertexID").isEmpty();
-						const bool hasInstanceId = !strFindUncommented(input, "gl_InstanceID").isEmpty();
-						const bool hasViewportId = !strFindUncommented(input, "gl_ViewportIndex").isEmpty();
-						const bool hasLayerId    = !strFindUncommented(input, "gl_Layer").isEmpty();
+						const bool hasVertexId   = !strFindUncommented(_options.keepComments, input, "gl_VertexID").isEmpty();
+						const bool hasInstanceId = !strFindUncommented(_options.keepComments, input, "gl_InstanceID").isEmpty();
+						const bool hasViewportId = !strFindUncommented(_options.keepComments, input, "gl_ViewportIndex").isEmpty();
+						const bool hasLayerId    = !strFindUncommented(_options.keepComments, input, "gl_Layer").isEmpty();
 
-						bx::StringView brace = strFindUncommented(bx::StringView(entry.getPtr(), shader.getTerm() ), "{");
+						bx::StringView brace = strFindUncommented(_options.keepComments, bx::StringView(entry.getPtr(), shader.getTerm() ), "{");
 						if (!brace.isEmpty() )
 						{
 							bx::StringView block = bx::strFindBlock(bx::StringView(brace.getPtr(), shader.getTerm() ), '{', '}');
@@ -2434,10 +2454,23 @@ namespace bgfx
 
 									bx::stringPrintf(code, "#version %d\n", need130 ? 130 : glsl_profile);
 
-									if (need130)
+									if (need130
+									||  glsl_profile >= 130)
 									{
+										bx::stringPrintf(code, "#define attribute in\n");
 										bx::stringPrintf(code, "#define varying %s\n"
 											, 'f' == _options.shaderType ? "in" : "out"
+											);
+										bx::stringPrintf(code
+											, "#define bgfxShadow2D(_sampler, _coord)     vec4_splat(texture(_sampler, _coord) )\n"
+											  "#define bgfxShadow2DProj(_sampler, _coord) vec4_splat(textureProj(_sampler, _coord) )\n"
+											);
+									}
+									else
+									{
+										bx::stringPrintf(code
+											, "#define bgfxShadow2D     shadow2D\n"
+											  "#define bgfxShadow2DProj shader2DProj\n"
 											);
 									}
 
@@ -2527,21 +2560,6 @@ namespace bgfx
 											"#define texture2DGrad     texture2DGradEXT\n"
 											"#define texture2DProjGrad texture2DProjGradEXT\n"
 											"#define textureCubeGrad   textureCubeGradEXT\n"
-											);
-									}
-
-									if (need130 || (glsl_profile >= 130) )
-									{
-										bx::stringPrintf(code
-											, "#define bgfxShadow2D(_sampler, _coord)     vec4_splat(texture(_sampler, _coord) )\n"
-											  "#define bgfxShadow2DProj(_sampler, _coord) vec4_splat(textureProj(_sampler, _coord) )\n"
-											);
-									}
-									else
-									{
-										bx::stringPrintf(code
-											, "#define bgfxShadow2D     shadow2D\n"
-											  "#define bgfxShadow2DProj shader2DProj\n"
 											);
 									}
 								}
@@ -2818,6 +2836,10 @@ namespace bgfx
 							else if (profile->lang == ShadingLang::WGSL)
 							{
 								compiled = compileWgslShader(_options, profile->id, code, _shaderWriter, _messageWriter);
+							}
+							else if (profile->lang == ShadingLang::Dxil)
+							{
+								compiled = compileDxilShader(_options, profile->id, code, _shaderWriter, _messageWriter);
 							}
 							else
 							{

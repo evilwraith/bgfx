@@ -103,8 +103,8 @@ static bgfx::ShaderHandle loadShader(bx::FileReaderI* _reader, const bx::StringV
 	switch (bgfx::getRendererType() )
 	{
 	case bgfx::RendererType::Noop:
-	case bgfx::RendererType::Direct3D11:
-	case bgfx::RendererType::Direct3D12: filePath.join("dx11");  break;
+	case bgfx::RendererType::Direct3D11: filePath.join("dxbc");  break;
+	case bgfx::RendererType::Direct3D12: filePath.join("dxil");  break;
 	case bgfx::RendererType::Agc:
 	case bgfx::RendererType::Gnm:        filePath.join("pssl");  break;
 	case bgfx::RendererType::Metal:      filePath.join("metal"); break;
@@ -355,6 +355,45 @@ void calcTangents(void* _vertices, uint16_t _numVertices, bgfx::VertexLayout _la
 	}
 
 	delete [] tangents;
+}
+
+uint32_t weldVertices(void* _output, const bgfx::VertexLayout& _layout, const void* _data, uint32_t _num, bool _index32)
+{
+	const uint16_t stride    = _layout.getStride();
+	const uint16_t posOffset = _layout.getOffset(bgfx::Attrib::Position);
+
+	unsigned int* remap = (unsigned int*)malloc(_num * sizeof(unsigned int) );
+	meshopt_generatePositionRemap(remap, (const float*)( (const uint8_t*)_data + posOffset), _num, stride);
+
+	uint32_t numVertices = 0;
+	for (uint32_t ii = 0; ii < _num; ++ii)
+	{
+		if (remap[ii] == ii)
+		{
+			numVertices++;
+		}
+	}
+
+	if (_index32)
+	{
+		uint32_t* output = (uint32_t*)_output;
+		for (uint32_t ii = 0; ii < _num; ++ii)
+		{
+			output[ii] = remap[ii];
+		}
+	}
+	else
+	{
+		uint16_t* output = (uint16_t*)_output;
+		for (uint32_t ii = 0; ii < _num; ++ii)
+		{
+			output[ii] = (uint16_t)remap[ii];
+		}
+	}
+
+	free(remap);
+
+	return numVertices;
 }
 
 Group::Group()

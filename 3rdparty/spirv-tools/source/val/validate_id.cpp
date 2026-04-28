@@ -123,6 +123,9 @@ bool InstructionCanHaveTypeOperand(const Instruction* inst) {
       spv::Op::OpUntypedArrayLengthKHR,
       spv::Op::OpFunction,
       spv::Op::OpAsmINTEL,
+      spv::Op::OpConstantSizeOfEXT,
+      spv::Op::OpBufferPointerEXT,
+      spv::Op::OpUntypedImageTexelPointerEXT,
   };
   const auto opcode = inst->opcode();
   bool type_instruction = spvOpcodeGeneratesType(opcode);
@@ -151,6 +154,8 @@ bool InstructionRequiresTypeOperand(const Instruction* inst) {
       spv::Op::OpPhi,
       spv::Op::OpUntypedArrayLengthKHR,
       spv::Op::OpAsmINTEL,
+      spv::Op::OpAliasScopeDeclINTEL,
+      spv::Op::OpAliasScopeListDeclINTEL,
   };
   const auto opcode = inst->opcode();
   bool debug_instruction = spvOpcodeIsDebug(opcode) || inst->IsDebugInfo();

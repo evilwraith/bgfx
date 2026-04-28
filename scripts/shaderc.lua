@@ -12,6 +12,7 @@ local SPIRV_CROSS    = path.join(BGFX_DIR, "3rdparty/spirv-cross")
 local SPIRV_HEADERS  = path.join(BGFX_DIR, "3rdparty/spirv-headers")
 local SPIRV_TOOLS    = path.join(BGFX_DIR, "3rdparty/spirv-tools")
 local TINT           = path.join(BGFX_DIR, "3rdparty/dawn")
+local D3D4LINUX      = path.join(BGFX_DIR, "3rdparty/d3d4linux")
 
 project "tint-core"
 	kind "StaticLib"
@@ -687,7 +688,7 @@ project "shaderc"
 		path.join(BIMG_DIR, "include"),
 		path.join(BGFX_DIR, "include"),
 
-		path.join(BGFX_DIR, "3rdparty/dxsdk/include"),
+		path.join(BGFX_DIR, "3rdparty/directx-headers/include/directx"),
 
 		FCPP_DIR,
 
@@ -747,6 +748,15 @@ project "shaderc"
 	configuration { "osx* or linux*" }
 		links {
 			"pthread",
+		}
+
+	-- Linux/macOS: d3d4linux for legacy HLSL (SM 5.0)
+	-- Linux only: directx-headers for DXIL (SM 6.0+, no macOS DXC library available)
+	configuration { "linux* or osx*" }
+		includedirs {
+			path.join(D3D4LINUX, "include"),
+			path.join(BGFX_DIR, "3rdparty/directx-headers/include"),
+			path.join(BGFX_DIR, "3rdparty/directx-headers/include/wsl/stubs"),
 		}
 
 	configuration {}

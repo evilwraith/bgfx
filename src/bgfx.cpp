@@ -226,7 +226,7 @@ namespace bgfx
 		{
 		}
 
-		virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, const void* _data, uint32_t _size, bool _yflip) override
+		virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) override
 		{
 			BX_UNUSED(_filePath, _width, _height, _pitch, _data, _size, _yflip);
 
@@ -238,7 +238,39 @@ namespace bgfx
 			bx::FileWriter writer;
 			if (bx::open(&writer, filePath) )
 			{
-				bimg::imageWriteTga(&writer, _width, _height, _pitch, _data, false, _yflip);
+				if (TextureFormat::RGBA8 == _format)
+				{
+					bimg::imageSwizzleBgra8(const_cast<void*>(_data), _pitch, _width, _height, _data, _pitch);
+					bimg::imageWriteTga(&writer, _width, _height, _pitch, _data, false, _yflip);
+				}
+				else if (TextureFormat::BGRA8 == _format)
+				{
+					bimg::imageWriteTga(&writer, _width, _height, _pitch, _data, false, _yflip);
+				}
+				else
+				{
+					const uint8_t  dstBpp   = bimg::getBitsPerPixel(bimg::TextureFormat::BGRA8);
+					const uint32_t dstPitch = _width  * dstBpp / 8;
+					const uint32_t dstSize  = _height * dstPitch;
+
+					void* dst = bx::alloc(g_allocator, dstSize);
+
+					bimg::imageConvert(
+						  g_allocator
+						, dst
+						, bimg::TextureFormat::BGRA8
+						, _data
+						, bimg::TextureFormat::Enum(_format)
+						, _width
+						, _height
+						, 1
+						);
+
+					bimg::imageWriteTga(&writer, _width, _height, _pitch, _data, false, _yflip);
+
+					bx::free(g_allocator, dst);
+				}
+
 				bx::close(&writer);
 			}
 		}
@@ -473,7 +505,7 @@ namespace bgfx
 		bx::write(&writer, tc, bx::ErrorAssert{});
 
 		rci->destroyTexture(_handle);
-		rci->createTexture(_handle, mem, _flags, 0);
+		rci->createTexture(_handle, mem, _flags, 0, 0);
 
 		release(mem);
 
@@ -547,6 +579,10 @@ namespace bgfx
 #include "fs_clear5.bin.h"
 #include "fs_clear6.bin.h"
 #include "fs_clear7.bin.h"
+#include "cs_mipgen_pow2.bin.h"
+#include "cs_mipgen_oddx.bin.h"
+#include "cs_mipgen_oddy.bin.h"
+#include "cs_mipgen_oddxy.bin.h"
 
 	static const EmbeddedShader s_embeddedShaders[] =
 	{
@@ -561,6 +597,10 @@ namespace bgfx
 		BGFX_EMBEDDED_SHADER(fs_clear5),
 		BGFX_EMBEDDED_SHADER(fs_clear6),
 		BGFX_EMBEDDED_SHADER(fs_clear7),
+		BGFX_EMBEDDED_SHADER(cs_mipgen_pow2),
+		BGFX_EMBEDDED_SHADER(cs_mipgen_oddx),
+		BGFX_EMBEDDED_SHADER(cs_mipgen_oddy),
+		BGFX_EMBEDDED_SHADER(cs_mipgen_oddxy),
 
 		BGFX_EMBEDDED_SHADER_END()
 	};
@@ -777,9 +817,12 @@ namespace bgfx
 		if (isValid(m_program) )
 		{
 			destroy(m_program);
+			m_program = BGFX_INVALID_HANDLE;
 		}
 
 		destroy(m_texture);
+		m_texture = BGFX_INVALID_HANDLE;
+
 		s_ctx->destroyTransientVertexBuffer(m_vb);
 		s_ctx->destroyTransientIndexBuffer(m_ib);
 	}
@@ -927,7 +970,15 @@ namespace bgfx
 	{
 		BGFX_CHECK_API_THREAD();
 
-		if (RendererType::Noop != g_caps.rendererType)
+		const RendererType::Enum rendererType = g_caps.rendererType;
+
+		if (false
+		||  RendererType::Direct3D11 == rendererType
+		||  RendererType::OpenGL     == rendererType
+		||  RendererType::OpenGLES   == rendererType
+		||  RendererType::Metal      == rendererType
+		||  RendererType::WebGPU     == rendererType
+		   )
 		{
 			VertexLayout layout;
 			layout
@@ -984,19 +1035,87 @@ namespace bgfx
 	{
 		BGFX_CHECK_API_THREAD();
 
-		if (RendererType::Noop != g_caps.rendererType)
+		for (uint32_t ii = 0, num = g_caps.limits.maxFBAttachments; ii < num; ++ii)
 		{
-			for (uint32_t ii = 0, num = g_caps.limits.maxFBAttachments; ii < num; ++ii)
+			if (isValid(m_program[ii]) )
 			{
-				if (isValid(m_program[ii]) )
+				destroy(m_program[ii]);
+				m_program[ii] = BGFX_INVALID_HANDLE;
+			}
+		}
+
+		if (isValid(m_vb) )
+		{
+			s_ctx->destroyVertexBuffer(m_vb);
+			m_vb = BGFX_INVALID_HANDLE;
+		}
+
+		if (isValid(m_layout) )
+		{
+			s_ctx->destroyVertexLayout(m_layout);
+			m_layout = BGFX_INVALID_HANDLE;
+		}
+	}
+
+	void MipGen::init()
+	{
+		BGFX_CHECK_API_THREAD();
+
+		const RendererType::Enum rendererType = g_caps.rendererType;
+
+		if (false
+		||  RendererType::Direct3D12 == rendererType
+		||  RendererType::WebGPU     == rendererType
+		   )
+		{
+			static const char* cs_mipgen[] =
+			{
+				"cs_mipgen_pow2",
+				"cs_mipgen_oddx",
+				"cs_mipgen_oddy",
+				"cs_mipgen_oddxy",
+			};
+
+			for (uint32_t ii = 0; ii < BX_COUNTOF(m_program); ++ii)
+			{
+				ShaderHandle csh = createEmbeddedShader(s_embeddedShaders, g_caps.rendererType, cs_mipgen[ii]);
+				BX_ASSERT(isValid(csh), "Failed to create mip generate embedded compute shader \"%s\"", cs_mipgen[ii]);
+
+				if (isValid(csh) )
 				{
-					destroy(m_program[ii]);
-					m_program[ii] = BGFX_INVALID_HANDLE;
+					m_program[ii] = createProgram(csh, true);
+					BX_ASSERT(isValid(m_program[ii]), "Failed to create mip generate program.");
 				}
 			}
 
-			s_ctx->destroyVertexBuffer(m_vb);
-			s_ctx->destroyVertexLayout(m_layout);
+			u_mipGen    = createUniform("bgfx_mipGen",    bgfx::UniformType::Vec4);
+			s_texMipSrc = createUniform("bgfx_texMipSrc", bgfx::UniformType::Sampler);
+		}
+	}
+
+	void MipGen::shutdown()
+	{
+		BGFX_CHECK_API_THREAD();
+
+		for (uint32_t ii = 0; ii < BX_COUNTOF(m_program); ++ii)
+		{
+			if (isValid(m_program[ii]) )
+			{
+				destroy(m_program[ii]);
+				m_program[ii] = BGFX_INVALID_HANDLE;
+			}
+		}
+
+		if (isValid(u_mipGen) )
+		{
+			destroy(u_mipGen);
+			u_mipGen = BGFX_INVALID_HANDLE;
+		}
+
+		if (isValid(s_texMipSrc) )
+		{
+			destroy(s_texMipSrc);
+			s_texMipSrc = BGFX_INVALID_HANDLE;
 		}
 	}
 
@@ -1631,6 +1750,8 @@ namespace bgfx
 		CAPS_FLAGS(BGFX_CAPS_TEXTURE_COMPARE_LEQUAL),
 		CAPS_FLAGS(BGFX_CAPS_TEXTURE_CUBE_ARRAY),
 		CAPS_FLAGS(BGFX_CAPS_TEXTURE_DIRECT_ACCESS),
+		CAPS_FLAGS(BGFX_CAPS_TEXTURE_EXTERNAL),
+		CAPS_FLAGS(BGFX_CAPS_TEXTURE_EXTERNAL_SHARED),
 		CAPS_FLAGS(BGFX_CAPS_TEXTURE_READ_BACK),
 		CAPS_FLAGS(BGFX_CAPS_TRANSPARENT_BACKBUFFER),
 		CAPS_FLAGS(BGFX_CAPS_VARIABLE_RATE_SHADING),
@@ -1764,39 +1885,46 @@ namespace bgfx
 
 		BX_TRACE("");
 		BX_TRACE("Supported texture formats:");
-		BX_TRACE("\t +----------------   2D: x = supported / * = emulated");
-		BX_TRACE("\t |+---------------   2D: sRGB format");
-		BX_TRACE("\t ||+--------------   3D: x = supported / * = emulated");
-		BX_TRACE("\t |||+-------------   3D: sRGB format");
-		BX_TRACE("\t ||||+------------ Cube: x = supported / * = emulated");
-		BX_TRACE("\t |||||+----------- Cube: sRGB format");
-		BX_TRACE("\t ||||||+---------- vertex format");
-		BX_TRACE("\t |||||||+--------- image: i = read-write / r = read / w = write");
-		BX_TRACE("\t ||||||||+-------- framebuffer");
-		BX_TRACE("\t |||||||||+------- MSAA framebuffer");
-		BX_TRACE("\t ||||||||||+------ MSAA texture");
-		BX_TRACE("\t |||||||||||+----- Auto-generated mips");
-		BX_TRACE("\t ||||||||||||  +-- name");
+		BX_TRACE("\t +-----------------   2D: x = supported / * = emulated");
+		BX_TRACE("\t |+----------------   2D: sRGB format");
+		BX_TRACE("\t ||+---------------   3D: x = supported / * = emulated");
+		BX_TRACE("\t |||+--------------   3D: sRGB format");
+		BX_TRACE("\t ||||+------------- Cube: x = supported / * = emulated");
+		BX_TRACE("\t |||||+------------ Cube: sRGB format");
+		BX_TRACE("\t ||||||+----------- Vertex format");
+		BX_TRACE("\t |||||||+---------- Image: i = read-write / r = read / w = write");
+		BX_TRACE("\t ||||||||+--------- Framebuffer");
+		BX_TRACE("\t |||||||||+-------- MSAA framebuffer");
+		BX_TRACE("\t ||||||||||+------- MSAA texture");
+		BX_TRACE("\t |||||||||||+------ Auto-generated mips");
+		BX_TRACE("\t ||||||||||||+----- Back-buffer");
+		BX_TRACE("\t |||||||||||||  +-- name");
 		for (uint32_t ii = 0; ii < TextureFormat::Count; ++ii)
 		{
 			if (TextureFormat::Unknown != ii
 			&&  TextureFormat::UnknownDepth != ii)
 			{
 				uint32_t flags = g_caps.formats[ii];
-				BX_TRACE("\t[%c%c%c%c%c%c%c%c%c%c%c%c] %s"
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_2D               ? 'x' : flags&BGFX_CAPS_FORMAT_TEXTURE_2D_EMULATED ? '*' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_2D_SRGB          ? 'l' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_3D               ? 'x' : flags&BGFX_CAPS_FORMAT_TEXTURE_3D_EMULATED ? '*' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_3D_SRGB          ? 'l' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_CUBE             ? 'x' : flags&BGFX_CAPS_FORMAT_TEXTURE_CUBE_EMULATED ? '*' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_CUBE_SRGB        ? 'l' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_VERTEX           ? 'v' : ' '
-					, (flags&BGFX_CAPS_FORMAT_TEXTURE_IMAGE_READ) &&
-					  (flags&BGFX_CAPS_FORMAT_TEXTURE_IMAGE_WRITE)    ? 'i' : flags&BGFX_CAPS_FORMAT_TEXTURE_IMAGE_READ ? 'r' : flags&BGFX_CAPS_FORMAT_TEXTURE_IMAGE_WRITE ? 'w' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER      ? 'f' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER_MSAA ? '+' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_MSAA             ? 'm' : ' '
-					, flags&BGFX_CAPS_FORMAT_TEXTURE_MIP_AUTOGEN      ? 'M' : ' '
+				BX_TRACE("\t[%c%c%c%c%c%c%c%c%c%c%c%c%c] %s"
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_2D               ? 'x'
+					:  flags & BGFX_CAPS_FORMAT_TEXTURE_2D_EMULATED      ? '*' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_2D_SRGB          ? 'l' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_3D               ? 'x'
+					:  flags & BGFX_CAPS_FORMAT_TEXTURE_3D_EMULATED      ? '*' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_3D_SRGB          ? 'l' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_CUBE             ? 'x'
+					:  flags & BGFX_CAPS_FORMAT_TEXTURE_CUBE_EMULATED    ? '*' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_CUBE_SRGB        ? 'l' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_VERTEX           ? 'v' : ' '
+					, (flags & BGFX_CAPS_FORMAT_TEXTURE_IMAGE_READ) &&
+					  (flags & BGFX_CAPS_FORMAT_TEXTURE_IMAGE_WRITE)     ? 'i'
+					:  flags & BGFX_CAPS_FORMAT_TEXTURE_IMAGE_READ       ? 'r'
+					:  flags & BGFX_CAPS_FORMAT_TEXTURE_IMAGE_WRITE      ? 'w' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER      ? 'f' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_FRAMEBUFFER_MSAA ? '+' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_MSAA             ? 'm' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_MIP_AUTOGEN      ? 'M' : ' '
+					,  flags & BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER       ? 'b' : ' '
 					, getName(TextureFormat::Enum(ii) )
 					);
 				BX_UNUSED(flags);
@@ -2129,6 +2257,7 @@ namespace bgfx
 
 		m_textVideoMemBlitter.init(m_init.resolution.debugTextScale);
 		m_clearQuad.init();
+		m_mipGen.init();
 
 		m_submit->m_transientVb = createTransientVertexBuffer(_init.limits.maxTransientVbSize);
 		m_submit->m_transientIb = createTransientIndexBuffer(_init.limits.maxTransientIbSize);
@@ -2155,6 +2284,7 @@ namespace bgfx
 		destroyTransientIndexBuffer(m_submit->m_transientIb);
 		m_textVideoMemBlitter.shutdown();
 		m_clearQuad.shutdown();
+		m_mipGen.shutdown();
 		frame();
 
 		if (BX_ENABLED(BGFX_CONFIG_MULTITHREADED) )
@@ -2181,9 +2311,6 @@ namespace bgfx
 
 		bx::alignedFree(g_allocator, m_encoder, BX_ALIGNOF(EncoderImpl) );
 		bx::free(g_allocator, m_encoderStats);
-
-		m_dynVertexBufferAllocator.compact();
-		m_dynIndexBufferAllocator.compact();
 
 		BX_ASSERT(
 			  m_layoutHandle.getNumHandles() == m_vertexLayoutRef.m_vertexLayoutMap.getNumElements()
@@ -2359,14 +2486,16 @@ namespace bgfx
 		}
 	}
 
-	Encoder* Context::begin(bool _forThread)
+	Encoder* Context::begin(bool _forceNewEncoder)
 	{
 		EncoderImpl* encoder = &m_encoder[0];
 
 #if BGFX_CONFIG_MULTITHREADED
-		if (_forThread || BGFX_API_THREAD_MAGIC != s_threadIndex)
+		if (_forceNewEncoder
+		||  BGFX_API_THREAD_MAGIC != s_threadIndex)
 		{
-			bx::MutexScope scopeLock(m_encoderApiLock);
+			bx::MutexScope beginLockScope(m_encoderBeginLock);
+			bx::MutexScope encoderApiScope(m_encoderApiLock);
 
 			uint16_t idx = m_encoderHandle->alloc();
 			if (kInvalidHandle == idx)
@@ -2378,7 +2507,7 @@ namespace bgfx
 			encoder->begin(m_submit, uint8_t(idx) );
 		}
 #else
-		BX_UNUSED(_forThread);
+		BX_UNUSED(_forceNewEncoder);
 #endif // BGFX_CONFIG_MULTITHREADED
 
 		return reinterpret_cast<Encoder*>(encoder);
@@ -2398,20 +2527,32 @@ namespace bgfx
 #endif // BGFX_CONFIG_MULTITHREADED
 	}
 
-	uint32_t Context::frame(bool _capture)
+	uint32_t Context::frame(uint8_t _flags)
 	{
 		m_encoder[0].end(true);
 
 #if BGFX_CONFIG_MULTITHREADED
-		bx::MutexScope resourceApiScope(m_resourceApiLock);
-
-		encoderApiWait();
+		m_encoderBeginLock.lock(); // don't let any bgfx::begin calls...
+		encoderApiWait();          // wait for all started encoders to return...
 		bx::MutexScope encoderApiScope(m_encoderApiLock);
+		m_encoderBeginLock.unlock();
+
+		bx::MutexScope resourceApiScope(m_resourceApiLock);
 #else
 		encoderApiWait();
 #endif // BGFX_CONFIG_MULTITHREADED
 
-		m_submit->m_capture = _capture;
+		m_encoderHandle->reset();
+		const uint16_t idx = m_encoderHandle->alloc();
+		BX_ASSERT(0 == idx, "Internal encoder handle is not 0 (idx %d).", idx); BX_UNUSED(idx);
+
+		if (0 != (_flags & BGFX_FRAME_DISCARD) )
+		{
+			m_submit->m_numRenderItems = 0;
+		}
+
+		m_submit->m_capture = 0 != (_flags & BGFX_FRAME_DEBUG_CAPTURE);
+		m_submit->m_flush   = 0 != (_flags & BGFX_FRAME_FLUSH);
 
 		uint32_t frameNum = m_submit->m_frameNum;
 
@@ -2542,8 +2683,11 @@ namespace bgfx
 
 		if (!m_flipAfterRender)
 		{
-			BGFX_PROFILER_SCOPE("bgfx/flip", kColorSubmit);
-			flip();
+			if (!m_render->m_flush)
+			{
+				BGFX_PROFILER_SCOPE("bgfx/flip", kColorSubmit);
+				flip();
+			}
 		}
 
 		if (apiSemWait(_msecs) )
@@ -2557,7 +2701,7 @@ namespace bgfx
 			{
 				{
 					BGFX_PROFILER_SCOPE("bgfx/Render submit", kColorSubmit);
-					m_renderCtx->submit(m_render, m_clearQuad, m_textVideoMemBlitter);
+					m_renderCtx->submit(m_render, m_clearQuad, m_mipGen, m_textVideoMemBlitter);
 					m_flipped = false;
 				}
 
@@ -2580,8 +2724,11 @@ namespace bgfx
 
 			if (m_flipAfterRender)
 			{
-				BGFX_PROFILER_SCOPE("bgfx/flip", kColorSubmit);
-				flip();
+				if (!m_render->m_flush)
+				{
+					BGFX_PROFILER_SCOPE("bgfx/flip", kColorSubmit);
+					flip();
+				}
 			}
 		}
 		else
@@ -3293,7 +3440,11 @@ namespace bgfx
 					uint8_t skip;
 					_cmdbuf.read(skip);
 
-					void* ptr = m_renderCtx->createTexture(handle, mem, flags, skip);
+					uint64_t external;
+					_cmdbuf.read(external);
+
+					void* ptr = m_renderCtx->createTexture(handle, mem, flags, skip, external);
+
 					if (NULL != ptr)
 					{
 						setDirectAccessPtr(handle, ptr);
@@ -3544,11 +3695,6 @@ namespace bgfx
 		flushTextureUpdateBatch(_cmdbuf);
 	}
 
-	uint32_t weldVertices(void* _output, const VertexLayout& _layout, const void* _data, uint32_t _num, bool _index32, float _epsilon)
-	{
-		return weldVertices(_output, _layout, _data, _num, _index32, _epsilon, g_allocator);
-	}
-
 	uint32_t topologyConvert(TopologyConvert::Enum _conversion, void* _dst, uint32_t _dstSize, const void* _indices, uint32_t _numIndices, bool _index32)
 	{
 		return topologyConvert(_conversion, _dst, _dstSize, _indices, _numIndices, _index32, g_allocator);
@@ -3599,6 +3745,7 @@ namespace bgfx
 		: ndt(NULL)
 		, nwh(NULL)
 		, context(NULL)
+		, queue(NULL)
 		, backBuffer(NULL)
 		, backBufferDS(NULL)
 		, type(NativeWindowHandleType::Default)
@@ -3606,7 +3753,7 @@ namespace bgfx
 	}
 
 	Resolution::Resolution()
-		: formatColor(TextureFormat::RGBA8)
+		: formatColor(TextureFormat::BGRA8)
 		, formatDepthStencil(TextureFormat::D24S8)
 		, width(1280)
 		, height(720)
@@ -3818,9 +3965,9 @@ namespace bgfx
 		s_ctx->reset(_width, _height, _flags, _format);
 	}
 
-	Encoder* begin(bool _forThread)
+	Encoder* begin(bool _forceNewEncoder)
 	{
-		return s_ctx->begin(_forThread);
+		return s_ctx->begin(_forceNewEncoder);
 	}
 
 #define BGFX_ENCODER(_func) reinterpret_cast<EncoderImpl*>(this)->_func
@@ -4228,10 +4375,10 @@ namespace bgfx
 		s_ctx->end(_encoder);
 	}
 
-	uint32_t frame(bool _capture)
+	uint32_t frame(uint8_t _flags)
 	{
 		BGFX_CHECK_API_THREAD();
-		return s_ctx->frame(_capture);
+		return s_ctx->frame(_flags);
 	}
 
 	const Caps* getCaps()
@@ -4741,6 +4888,20 @@ namespace bgfx
 				, ii
 				, tr.m_flags
 				);
+
+			BGFX_ERROR_CHECK(true
+				&& (0 == (at.resolve & BGFX_RESOLVE_AUTO_GEN_MIPS)
+					|| 1 == tr.m_numMips
+					|| 0 != (g_caps.formats[tr.m_format] & BGFX_CAPS_FORMAT_TEXTURE_MIP_AUTOGEN) )
+				, _err
+				, BGFX_ERROR_FRAME_BUFFER_VALIDATION
+				, "Frame buffer attachment with `BGFX_RESOLVE_AUTO_GEN_MIPS` requires a format supporting `BGFX_CAPS_FORMAT_TEXTURE_MIP_AUTOGEN`."
+				, "Attachment %d, format %s, num mips %d, format caps 0x%08x."
+				, ii
+				, getName(TextureFormat::Enum(tr.m_format) )
+				, tr.m_numMips
+				, g_caps.formats[tr.m_format]
+				);
 		}
 
 		BGFX_ERROR_CHECK(true
@@ -4998,7 +5159,7 @@ namespace bgfx
 	TextureHandle createTexture(const Memory* _mem, uint64_t _flags, uint8_t _skip, TextureInfo* _info)
 	{
 		BX_ASSERT(NULL != _mem, "_mem can't be NULL");
-		return s_ctx->createTexture(_mem, _flags, _skip, _info, BackbufferRatio::Count, false);
+		return s_ctx->createTexture(_mem, _flags, _skip, _info, BackbufferRatio::Count, false, 0);
 	}
 
 	void getTextureSizeFromRatio(BackbufferRatio::Enum _ratio, uint16_t& _width, uint16_t& _height)
@@ -5019,7 +5180,17 @@ namespace bgfx
 		_height = bx::max<uint16_t>(1, _height);
 	}
 
-	static TextureHandle createTexture2D(BackbufferRatio::Enum _ratio, uint16_t _width, uint16_t _height, bool _hasMips, uint16_t _numLayers, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem)
+	static TextureHandle createTexture2D(
+		  BackbufferRatio::Enum _ratio
+		, uint16_t _width
+		, uint16_t _height
+		, bool _hasMips
+		, uint16_t _numLayers
+		, TextureFormat::Enum _format
+		, uint64_t _flags
+		, const Memory* _mem
+		, uint64_t _external
+		)
 	{
 		if (BackbufferRatio::Count != _ratio)
 		{
@@ -5068,23 +5239,36 @@ namespace bgfx
 		tc.m_mem       = _mem;
 		bx::write(&writer, tc, bx::ErrorAssert{});
 
-		return s_ctx->createTexture(mem, _flags, 0, NULL, _ratio, NULL != _mem);
+		return s_ctx->createTexture(mem, _flags, 0, NULL, _ratio, NULL != _mem, _external);
 	}
 
-	TextureHandle createTexture2D(uint16_t _width, uint16_t _height, bool _hasMips, uint16_t _numLayers, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem)
+	TextureHandle createTexture2D(uint16_t _width, uint16_t _height, bool _hasMips, uint16_t _numLayers, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem, uint64_t _external)
 	{
+		BX_ASSERT(false
+			|| 0 == _external
+			|| 0 != (g_caps.supported & BGFX_CAPS_TEXTURE_EXTERNAL)
+			, "External texture is not supported! "
+			  "Use bgfx::getCaps to check `BGFX_CAPS_TEXTURE_EXTERNAL` backend renderer capabilities."
+			);
 		BX_ASSERT(_width > 0 && _height > 0, "Invalid texture size (width %d, height %d).", _width, _height);
-		return createTexture2D(BackbufferRatio::Count, _width, _height, _hasMips, _numLayers, _format, _flags, _mem);
+		return createTexture2D(BackbufferRatio::Count, _width, _height, _hasMips, _numLayers, _format, _flags, _mem, _external);
 	}
 
 	TextureHandle createTexture2D(BackbufferRatio::Enum _ratio, bool _hasMips, uint16_t _numLayers, TextureFormat::Enum _format, uint64_t _flags)
 	{
 		BX_ASSERT(_ratio < BackbufferRatio::Count, "Invalid back buffer ratio.");
-		return createTexture2D(_ratio, 0, 0, _hasMips, _numLayers, _format, _flags, NULL);
+		return createTexture2D(_ratio, 0, 0, _hasMips, _numLayers, _format, _flags, NULL, 0);
 	}
 
-	TextureHandle createTexture3D(uint16_t _width, uint16_t _height, uint16_t _depth, bool _hasMips, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem)
+	TextureHandle createTexture3D(uint16_t _width, uint16_t _height, uint16_t _depth, bool _hasMips, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem, uint64_t _external)
 	{
+		BX_ASSERT(false
+			|| 0 == _external
+			|| 0 != (g_caps.supported & BGFX_CAPS_TEXTURE_EXTERNAL)
+			, "External texture is not supported! "
+			  "Use bgfx::getCaps to check `BGFX_CAPS_TEXTURE_EXTERNAL` backend renderer capabilities."
+			);
+
 		bx::ErrorAssert err;
 		isTextureValid(_width, _height, _depth, false, 1, _format, _flags, &err);
 
@@ -5124,11 +5308,18 @@ namespace bgfx
 		tc.m_mem       = _mem;
 		bx::write(&writer, tc, bx::ErrorAssert{});
 
-		return s_ctx->createTexture(mem, _flags, 0, NULL, BackbufferRatio::Count, NULL != _mem);
+		return s_ctx->createTexture(mem, _flags, 0, NULL, BackbufferRatio::Count, NULL != _mem, _external);
 	}
 
-	TextureHandle createTextureCube(uint16_t _size, bool _hasMips, uint16_t _numLayers, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem)
+	TextureHandle createTextureCube(uint16_t _size, bool _hasMips, uint16_t _numLayers, TextureFormat::Enum _format, uint64_t _flags, const Memory* _mem, uint64_t _external)
 	{
+		BX_ASSERT(false
+			|| 0 == _external
+			|| 0 != (g_caps.supported & BGFX_CAPS_TEXTURE_EXTERNAL)
+			, "External texture is not supported! "
+			  "Use bgfx::getCaps to check `BGFX_CAPS_TEXTURE_EXTERNAL` backend renderer capabilities."
+			);
+
 		bx::ErrorAssert err;
 		isTextureValid(_size, _size, 0, true, _numLayers, _format, _flags, &err);
 
@@ -5169,7 +5360,7 @@ namespace bgfx
 		tc.m_mem       = _mem;
 		bx::write(&writer, tc, bx::ErrorAssert{});
 
-		return s_ctx->createTexture(mem, _flags, 0, NULL, BackbufferRatio::Count, NULL != _mem);
+		return s_ctx->createTexture(mem, _flags, 0, NULL, BackbufferRatio::Count, NULL != _mem, _external);
 	}
 
 	void setName(TextureHandle _handle, const char* _name, int32_t _len)
@@ -6000,6 +6191,8 @@ static_assert( (0
 	| BGFX_CAPS_TEXTURE_BLIT
 	| BGFX_CAPS_TEXTURE_CUBE_ARRAY
 	| BGFX_CAPS_TEXTURE_DIRECT_ACCESS
+	| BGFX_CAPS_TEXTURE_EXTERNAL
+	| BGFX_CAPS_TEXTURE_EXTERNAL_SHARED
 	| BGFX_CAPS_TEXTURE_READ_BACK
 	| BGFX_CAPS_VERTEX_ATTRIB_HALF
 	| BGFX_CAPS_VERTEX_ATTRIB_UINT10
@@ -6028,6 +6221,8 @@ static_assert( (0
 	^ BGFX_CAPS_TEXTURE_BLIT
 	^ BGFX_CAPS_TEXTURE_CUBE_ARRAY
 	^ BGFX_CAPS_TEXTURE_DIRECT_ACCESS
+	^ BGFX_CAPS_TEXTURE_EXTERNAL
+	^ BGFX_CAPS_TEXTURE_EXTERNAL_SHARED
 	^ BGFX_CAPS_TEXTURE_READ_BACK
 	^ BGFX_CAPS_VERTEX_ATTRIB_HALF
 	^ BGFX_CAPS_VERTEX_ATTRIB_UINT10
@@ -6087,9 +6282,9 @@ namespace bgfx
 			m_interface->vtbl->cache_write(m_interface, _id, _data, _size);
 		}
 
-		virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, const void* _data, uint32_t _size, bool _yflip) override
+		virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) override
 		{
-			m_interface->vtbl->screen_shot(m_interface, _filePath, _width, _height, _pitch, _data, _size, _yflip);
+			m_interface->vtbl->screen_shot(m_interface, _filePath, _width, _height, _pitch, (bgfx_texture_format_t)_format, _data, _size, _yflip);
 		}
 
 		virtual void captureBegin(uint32_t _width, uint32_t _height, uint32_t _pitch, TextureFormat::Enum _format, bool _yflip) override

@@ -11,11 +11,63 @@ namespace bgfx
 	extern bool g_verbose;
 }
 
-#ifndef SHADERC_CONFIG_HLSL
-#	define SHADERC_CONFIG_HLSL BX_PLATFORM_WINDOWS
-#endif // SHADERC_CONFIG_HLSL
-
 #include <bx/bx.h>
+
+// HLSL compilation support:
+// - Windows: Native D3DCompiler DLL
+// - Linux/macOS: d3d4linux (Wine-based D3DCompiler via IPC)
+#ifndef SHADERC_CONFIG_HAS_D3DCOMPILER
+#	if BX_PLATFORM_WINDOWS
+#		if __has_include(<d3dcompiler.h>)
+#			define SHADERC_CONFIG_HAS_D3DCOMPILER 1
+#		endif
+#	elif BX_PLATFORM_LINUX
+#		if __has_include(<d3d4linux.h>)
+#			define SHADERC_CONFIG_HAS_D3DCOMPILER 1
+#		endif
+#	endif
+// Still not?
+#	ifndef SHADERC_CONFIG_HAS_D3DCOMPILER
+#		define SHADERC_CONFIG_HAS_D3DCOMPILER 0
+#	endif
+#endif // SHADERC_CONFIG_HAS_D3DCOMPILER
+
+// DXIL compilation support (Shader Model 6.0+):
+// - Windows: Native DXC (dxcompiler.dll)
+// - Linux: DXC (libdxcompiler.so) via directx-headers
+// - macOS: Not supported (no DXC dynamic library available)
+#ifndef SHADERC_CONFIG_HAS_DXC
+#	define SHADERC_CONFIG_HAS_DXC (0  \
+		|| BX_PLATFORM_WINDOWS     \
+		|| BX_PLATFORM_LINUX       \
+		)
+#endif // SHADERC_CONFIG_HAS_DXC
+
+#ifndef SHADERC_CONFIG_HAS_TINT
+#	if __has_include(<tint/api/tint.h>)
+#		define SHADERC_CONFIG_HAS_TINT 1
+#	else
+#		define SHADERC_CONFIG_HAS_TINT 0
+#	endif
+#endif
+
+#ifndef SHADERC_CONFIG_HAS_GLSLANG
+#	if __has_include(<ShaderLang.h>) \
+	&& __has_include(<SPIRV/SpvTools.h>)
+#		define SHADERC_CONFIG_HAS_GLSLANG 1
+#	else
+#		define SHADERC_CONFIG_HAS_GLSLANG 0
+#	endif
+#endif
+
+#ifndef SHADERC_CONFIG_HAS_GLSL_OPTIMIZER
+#	if __has_include("glsl_optimizer.h")
+#		define SHADERC_CONFIG_HAS_GLSL_OPTIMIZER 1
+#	else
+#		define SHADERC_CONFIG_HAS_GLSL_OPTIMIZER 0
+#	endif
+#endif
+
 #include <bx/debug.h>
 #include <bx/commandline.h>
 #include <bx/endian.h>
@@ -127,6 +179,7 @@ namespace bgfx
 
 	bool compileGLSLShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _writer, bx::WriterI* _messages);
 	bool compileHLSLShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _writer, bx::WriterI* _messages);
+	bool compileDxilShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _writer, bx::WriterI* _messages);
 	bool compileMetalShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _writer, bx::WriterI* _messages);
 	bool compilePSSLShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _writer, bx::WriterI* _messages);
 	bool compileSPIRVShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _writer, bx::WriterI* _messages);

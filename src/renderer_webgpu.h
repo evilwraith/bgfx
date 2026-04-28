@@ -15,7 +15,6 @@
 		)
 
 #include "debug_renderdoc.h"
-#include "shader_spirv.h"
 
 #define _WGPU_CHECK(_call) _call; BX_ASSERT(!wgpuErrorCheck(), "" #_call " failed!")
 
@@ -348,12 +347,21 @@
 	/*WGPU_RELEASE_FUNC(RenderBundle);*/        \
 	/*WGPU_RELEASE_FUNC(RenderBundleEncoder);*/ \
 	WGPU_RELEASE_FUNC(RenderPipeline);          \
+	/*WGPU_RELEASE_FUNC(ResourceTable);*/       \
 	WGPU_RELEASE_FUNC(Sampler);                 \
 	WGPU_RELEASE_FUNC(ShaderModule);            \
 	/*WGPU_RELEASE_FUNC(SharedBufferMemory);*/  \
 	/*WGPU_RELEASE_FUNC(SharedFence);*/         \
 	/*WGPU_RELEASE_FUNC(SharedTextureMemory);*/ \
 	/*WGPU_RELEASE_FUNC(TexelBufferView);*/     \
+	/* end */
+
+#define WGPU_DESTROY                      \
+	WGPU_DESTROY_FUNC(Buffer)             \
+	WGPU_DESTROY_FUNC(Device)             \
+	WGPU_DESTROY_FUNC(Texture)            \
+	WGPU_DESTROY_FUNC(QuerySet)           \
+	/*WGPU_DESTROY_FUNC(ResourceTable);*/ \
 	/* end */
 
 #define BGFX_WGPU_PROFILER_BEGIN(_view, _abgr)        \
@@ -548,7 +556,6 @@ namespace bgfx { namespace wgpu
 			bufferBindingType = WGPUBufferBindingType_Undefined;
 			sampleType        = WGPUTextureSampleType_Undefined;
 			viewDimension     = WGPUTextureViewDimension_Undefined;
-			shaderStage       = shaderStage;
 		}
 	};
 
@@ -752,6 +759,8 @@ namespace bgfx { namespace wgpu
 		void update(const Resolution& _resolution);
 
 		void present();
+
+		void resolve(WGPUCommandEncoder _cmdEncoder);
 
 		bool isSwapChain() const
 		{

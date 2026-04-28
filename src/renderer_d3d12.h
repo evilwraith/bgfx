@@ -22,7 +22,6 @@
 
 #include "renderer.h"
 #include "renderer_d3d.h"
-#include "shader_dxbc.h"
 #include "debug_renderdoc.h"
 #include "nvapi.h"
 #include "dxgi.h"
@@ -77,7 +76,21 @@ extern "C" uint64_t                    WINAPI bgfx_PIXEventsReplaceBlock(PIXEven
 
 namespace bgfx { namespace d3d12
 {
-	struct Rdt
+	struct RenderRp
+	{
+		enum Enum
+		{
+			Sampler,
+			SRV,
+			CBV,
+			CBF,
+			UAV,
+
+			Count
+		};
+	};
+
+	struct ComputeRp
 	{
 		enum Enum
 		{
@@ -295,6 +308,7 @@ namespace bgfx { namespace d3d12
 		TextureD3D12()
 			: m_ptr(NULL)
 			, m_singleMsaa(NULL)
+			, m_handle(NULL)
 			, m_directAccessPtr(NULL)
 			, m_state(D3D12_RESOURCE_STATE_COMMON)
 			, m_numMips(0)
@@ -303,7 +317,7 @@ namespace bgfx { namespace d3d12
 			bx::memSet(&m_uavd, 0, sizeof(m_uavd) );
 		}
 
-		void* create(const Memory* _mem, uint64_t _flags, uint8_t _skip);
+		void* create(const Memory* _mem, uint64_t _flags, uint8_t _skip, uint64_t _external);
 		void destroy();
 		void overrideInternal(uintptr_t _ptr);
 		void update(ID3D12GraphicsCommandList* _commandList, uint8_t _side, uint8_t _mip, const Rect& _rect, uint16_t _z, uint16_t _depth, uint16_t _pitch, const Memory* _mem);
@@ -314,6 +328,7 @@ namespace bgfx { namespace d3d12
 		D3D12_UNORDERED_ACCESS_VIEW_DESC m_uavd;
 		ID3D12Resource* m_ptr;
 		ID3D12Resource* m_singleMsaa;
+		HANDLE m_handle;
 		void* m_directAccessPtr;
 		D3D12_RESOURCE_STATES m_state;
 		uint64_t m_flags;
@@ -321,7 +336,6 @@ namespace bgfx { namespace d3d12
 		uint32_t m_height;
 		uint32_t m_depth;
 		uint32_t m_numLayers;
-		uint16_t m_samplerIdx;
 		uint8_t m_type;
 		uint8_t m_requestedFormat;
 		uint8_t m_textureFormat;
@@ -376,11 +390,12 @@ namespace bgfx { namespace d3d12
 			: m_currentFence(0)
 			, m_completedFence(0)
 			, m_control(BX_COUNTOF(m_commandList) )
+			, m_externalQueue(false)
 		{
 			static_assert(BX_COUNTOF(m_commandList) == BX_COUNTOF(m_release) );
 		}
 
-		void init(ID3D12Device* _device);
+		void init(ID3D12Device* _device, ID3D12CommandQueue* _queue);
 		void shutdown();
 		ID3D12GraphicsCommandList* alloc();
 		uint64_t kick();
@@ -388,6 +403,9 @@ namespace bgfx { namespace d3d12
 		bool tryFinish(uint64_t _waitFence);
 		void release(ID3D12Resource* _ptr);
 		bool consume(uint32_t _ms = UINT32_MAX);
+
+		void addExternal(TextureHandle _handle);
+		void removeExternal(TextureHandle _handle);
 
 		struct CommandList
 		{
@@ -441,7 +459,10 @@ namespace bgfx { namespace d3d12
 		CommandList m_commandList[kMaxCommandLists];
 		typedef stl::vector<ID3D12Resource*> ResourceArray;
 		ResourceArray m_release[kMaxCommandLists];
+		typedef stl::vector<TextureHandle> ExternalTextureArray;
+		ExternalTextureArray m_external;
 		bx::RingBufferControl m_control;
+		bool m_externalQueue;
 
 		ID3D12Resource*  m_pipelineStatsReadBack;
 		ID3D12QueryHeap* m_pipelineStatsQueryHeap;
@@ -478,7 +499,7 @@ namespace bgfx { namespace d3d12
 		template<typename Ty>
 		Ty& getCmd(Enum _type);
 
-		uint32_t draw(ID3D12GraphicsCommandList* _commandList, D3D12_GPU_VIRTUAL_ADDRESS _cbv, const RenderDraw& _draw);
+		uint32_t draw(ID3D12GraphicsCommandList* _commandList, D3D12_GPU_VIRTUAL_ADDRESS _cbv, D3D12_GPU_VIRTUAL_ADDRESS _cbf, const RenderDraw& _draw);
 
 		void flush(ID3D12GraphicsCommandList* _commandList, Enum _type);
 		void flush(ID3D12GraphicsCommandList* _commandList, bool _clean = false);
@@ -504,6 +525,7 @@ namespace bgfx { namespace d3d12
 		{
 			D3D12_VERTEX_BUFFER_VIEW vbv[BGFX_CONFIG_MAX_VERTEX_STREAMS + 1 /* instanced buffer */];
 			D3D12_GPU_VIRTUAL_ADDRESS cbv;
+			D3D12_GPU_VIRTUAL_ADDRESS cbf;
 			D3D12_DRAW_ARGUMENTS args;
 		};
 
@@ -512,6 +534,7 @@ namespace bgfx { namespace d3d12
 			D3D12_VERTEX_BUFFER_VIEW vbv[BGFX_CONFIG_MAX_VERTEX_STREAMS + 1 /* instanced buffer */];
 			D3D12_INDEX_BUFFER_VIEW ibv;
 			D3D12_GPU_VIRTUAL_ADDRESS cbv;
+			D3D12_GPU_VIRTUAL_ADDRESS cbf;
 			D3D12_DRAW_INDEXED_ARGUMENTS args;
 		};
 

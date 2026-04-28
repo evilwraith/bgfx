@@ -85,9 +85,11 @@ namespace bgfx { namespace gl
 
 	static const GLenum s_attribType[] =
 	{
+		GL_BYTE,                     // Int8
 		GL_UNSIGNED_BYTE,            // Uint8
 		GL_UNSIGNED_INT_10_10_10_2,  // Uint10
 		GL_SHORT,                    // Int16
+		GL_UNSIGNED_SHORT,           // Uint16
 		GL_HALF_FLOAT,               // Half
 		GL_FLOAT,                    // Float
 	};
@@ -425,7 +427,11 @@ namespace bgfx { namespace gl
 		GL_DEPTH_COMPONENT16,  // D16
 		GL_DEPTH_COMPONENT24,  // D24
 		GL_DEPTH24_STENCIL8,   // D24S8
+#if BGFX_CONFIG_RENDERER_OPENGLES
+		GL_DEPTH_COMPONENT32F, // D32
+#else
 		GL_DEPTH_COMPONENT32,  // D32
+#endif // BGFX_CONFIG_RENDERER_OPENGLES
 		GL_DEPTH_COMPONENT32F, // D16F
 		GL_DEPTH_COMPONENT32F, // D24F
 		GL_DEPTH_COMPONENT32F, // D32F
@@ -2424,6 +2430,13 @@ namespace bgfx { namespace gl
 				m_workaround.m_detachShader = false;
 			}
 
+			if (BX_ENABLED(BGFX_CONFIG_RENDERER_OPENGLES)
+			&&  !bx::strFind(m_version, "ANGLE").isEmpty() )
+			{
+				// Extension reports it exist, but it's broken.
+				s_extension[Extension::KHR_debug].m_initialize = false;
+			}
+
 			if (BX_ENABLED(BGFX_CONFIG_RENDERER_USE_EXTENSIONS) )
 			{
 				const char* extensions = (const char*)glGetString(GL_EXTENSIONS);
@@ -2741,7 +2754,7 @@ namespace bgfx { namespace gl
 				{
 					const TextureFormat::Enum fmt = TextureFormat::Enum(ii);
 
-					uint16_t supported = BGFX_CAPS_FORMAT_TEXTURE_NONE;
+					uint32_t supported = BGFX_CAPS_FORMAT_TEXTURE_NONE;
 					supported |= s_textureFormat[ii].m_supported
 						? BGFX_CAPS_FORMAT_TEXTURE_2D
 						| BGFX_CAPS_FORMAT_TEXTURE_3D
@@ -2810,6 +2823,8 @@ namespace bgfx { namespace gl
 
 					g_caps.formats[ii] = supported;
 				}
+
+				g_caps.formats[TextureFormat::BGRA8] |= BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER;
 
 				g_caps.supported |= !!(BGFX_CONFIG_RENDERER_OPENGL || m_gles3)
 					|| s_extension[Extension::OES_texture_3D].m_supported
@@ -3153,12 +3168,23 @@ namespace bgfx { namespace gl
 							) );
 					}
 				}
+				else
+				{
+					glPushDebugGroup = stubPushDebugGroup;
+					glPopDebugGroup  = stubPopDebugGroup;
+					glObjectLabel    = stubObjectLabel;
+				}
 
 				if (NULL == glPushDebugGroup
 				||  NULL == glPopDebugGroup)
 				{
 					glPushDebugGroup = stubPushDebugGroup;
 					glPopDebugGroup  = stubPopDebugGroup;
+				}
+
+				if (NULL == glObjectLabel)
+				{
+					glObjectLabel = stubObjectLabel;
 				}
 
 				if (s_extension[Extension::ARB_seamless_cube_map].m_supported)
@@ -3184,11 +3210,6 @@ namespace bgfx { namespace gl
 					|| s_extension[Extension::EXT_debug_tool].m_supported
 					|| NULL != findModule("Nvda.Graphics.Interception.dll")
 					);
-
-				if (NULL == glObjectLabel)
-				{
-					glObjectLabel = stubObjectLabel;
-				}
 
 				if (NULL == glInvalidateFramebuffer)
 				{
@@ -3393,8 +3414,9 @@ namespace bgfx { namespace gl
 			m_program[_handle.idx].destroy();
 		}
 
-		void* createTexture(TextureHandle _handle, const Memory* _mem, uint64_t _flags, uint8_t _skip) override
+		void* createTexture(TextureHandle _handle, const Memory* _mem, uint64_t _flags, uint8_t _skip, uint64_t _external) override
 		{
+			BX_UNUSED(_external);
 			m_textures[_handle.idx].create(_mem, _flags, _skip);
 			return NULL;
 		}
@@ -3599,15 +3621,18 @@ namespace bgfx { namespace gl
 				, data
 				) );
 
+			TextureFormat::Enum format = TextureFormat::BGRA8;
+
 			if (GL_RGBA == m_readPixelsFmt)
 			{
-				bimg::imageSwizzleBgra8(data, width*4, width, height, data, width*4);
+				format = TextureFormat::RGBA8;
 			}
 
 			g_callback->screenShot(_filePath
 				, width
 				, height
 				, width*4
+				, format
 				, data
 				, length
 				, true
@@ -3680,7 +3705,7 @@ namespace bgfx { namespace gl
 
 		void submitUniformCache(UniformCacheState& _ucs, uint16_t _view);
 
-		void submit(Frame* _render, ClearQuad& _clearQuad, TextVideoMemBlitter& _textVideoMemBlitter) override;
+		void submit(Frame* _render, const ClearQuad& _clearQuad, const MipGen& _mipGen, TextVideoMemBlitter& _textVideoMemBlitter) override;
 
 		void dbgTextRenderBegin(TextVideoMemBlitter& _blitter) override
 		{
@@ -4514,7 +4539,7 @@ namespace bgfx { namespace gl
 			}
 		}
 
-		void clearQuad(ClearQuad& _clearQuad, const Rect& _rect, const Clear& _clear, uint32_t _height, const float _palette[][4])
+		void clearQuad(const ClearQuad& _clearQuad, const Rect& _rect, const Clear& _clear, uint32_t _height, const float _palette[][4])
 		{
 			uint32_t numMrt = 1;
 			FrameBufferHandle fbh = m_fbh;
@@ -7489,7 +7514,7 @@ namespace bgfx { namespace gl
 		}
 	}
 
-	void RendererContextGL::submit(Frame* _render, ClearQuad& _clearQuad, TextVideoMemBlitter& _textVideoMemBlitter)
+	void RendererContextGL::submit(Frame* _render, const ClearQuad& _clearQuad, const MipGen& /*_mipGen*/, TextVideoMemBlitter& _textVideoMemBlitter)
 	{
 		if (_render->m_capture)
 		{

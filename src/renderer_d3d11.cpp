@@ -331,6 +331,12 @@ namespace bgfx { namespace d3d11
 
 	static const DXGI_FORMAT s_attribType[][4][2] =
 	{
+		{ // Int8
+			{ DXGI_FORMAT_R8_SINT,            DXGI_FORMAT_R8_SNORM           },
+			{ DXGI_FORMAT_R8G8_SINT,          DXGI_FORMAT_R8G8_SNORM         },
+			{ DXGI_FORMAT_R8G8B8A8_SINT,      DXGI_FORMAT_R8G8B8A8_SNORM     },
+			{ DXGI_FORMAT_R8G8B8A8_SINT,      DXGI_FORMAT_R8G8B8A8_SNORM     },
+		},
 		{ // Uint8
 			{ DXGI_FORMAT_R8_UINT,            DXGI_FORMAT_R8_UNORM           },
 			{ DXGI_FORMAT_R8G8_UINT,          DXGI_FORMAT_R8G8_UNORM         },
@@ -348,6 +354,12 @@ namespace bgfx { namespace d3d11
 			{ DXGI_FORMAT_R16G16_SINT,        DXGI_FORMAT_R16G16_SNORM       },
 			{ DXGI_FORMAT_R16G16B16A16_SINT,  DXGI_FORMAT_R16G16B16A16_SNORM },
 			{ DXGI_FORMAT_R16G16B16A16_SINT,  DXGI_FORMAT_R16G16B16A16_SNORM },
+		},
+		{ // Uint16
+			{ DXGI_FORMAT_R16_UINT,           DXGI_FORMAT_R16_UNORM          },
+			{ DXGI_FORMAT_R16G16_UINT,        DXGI_FORMAT_R16G16_UNORM       },
+			{ DXGI_FORMAT_R16G16B16A16_UINT,  DXGI_FORMAT_R16G16B16A16_UNORM },
+			{ DXGI_FORMAT_R16G16B16A16_UINT,  DXGI_FORMAT_R16G16B16A16_UNORM },
 		},
 		{ // Half
 			{ DXGI_FORMAT_R16_FLOAT,          DXGI_FORMAT_R16_FLOAT          },
@@ -423,6 +435,7 @@ namespace bgfx { namespace d3d11
 
 	static const GUID WKPDID_D3DDebugObjectName     = { 0x429b8c22, 0x9188, 0x4b0c, { 0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00 } };
 	static const GUID IID_ID3D11Texture2D           = { 0x6f15aaf2, 0xd208, 0x4e89, { 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c } };
+	static const GUID IID_ID3D11Resource            = { 0xdc8e63f3, 0xd12b, 0x4952, { 0xb4, 0x7b, 0x5e, 0x45, 0x02, 0x6a, 0x86, 0x2d } };
 	static const GUID IID_ID3D11Device1             = { 0xa04bfb29, 0x08ef, 0x43d6, { 0xa4, 0x9c, 0xa9, 0xbd, 0xbd, 0xcb, 0xe6, 0x86 } };
 	static const GUID IID_ID3D11Device2             = { 0x9d06dffa, 0xd1e5, 0x4d07, { 0x83, 0xa8, 0x1b, 0xb1, 0x23, 0xf2, 0xf8, 0x41 } };
 	static const GUID IID_ID3D11Device3             = { 0xa05c8c37, 0xd2c6, 0x4732, { 0xb3, 0xa0, 0x9c, 0xe0, 0xb0, 0xdc, 0x9a, 0xe6 } };
@@ -1250,6 +1263,7 @@ namespace bgfx { namespace d3d11
 					| ((m_featureLevel >= D3D_FEATURE_LEVEL_11_0)
 						? BGFX_CAPS_PRIMITIVE_ID
 						: 0)
+					| BGFX_CAPS_TEXTURE_EXTERNAL
 					);
 
 				m_timerQuerySupport   = m_featureLevel >= D3D_FEATURE_LEVEL_10_0;
@@ -1370,9 +1384,10 @@ namespace bgfx { namespace d3d11
 
 				for (uint32_t ii = 0; ii < TextureFormat::Count; ++ii)
 				{
-					uint16_t support = BGFX_CAPS_FORMAT_TEXTURE_NONE;
+					uint32_t support = BGFX_CAPS_FORMAT_TEXTURE_NONE;
 
-					const DXGI_FORMAT fmt = bimg::isDepth(bimg::TextureFormat::Enum(ii) )
+					const bool isDepthFormat = bimg::isDepth(bimg::TextureFormat::Enum(ii));
+					const DXGI_FORMAT fmt = isDepthFormat
 						? s_textureFormat[ii].m_fmtDsv
 						: s_textureFormat[ii].m_fmt
 						;
@@ -1454,6 +1469,13 @@ namespace bgfx { namespace d3d11
 										? BGFX_CAPS_FORMAT_TEXTURE_MIP_AUTOGEN
 										: BGFX_CAPS_FORMAT_TEXTURE_NONE
 										;
+
+								support |= 0 != (data.OutFormatSupport & (0
+										| D3D11_FORMAT_SUPPORT_DISPLAY
+										) )
+										? BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER
+										: BGFX_CAPS_FORMAT_TEXTURE_NONE
+										;
 							}
 							else
 							{
@@ -1462,6 +1484,30 @@ namespace bgfx { namespace d3d11
 									, hr
 									, getName(TextureFormat::Enum(ii) )
 									);
+							}
+
+							if (isDepthFormat)
+							{
+								const DXGI_FORMAT fmtDepthSampling = s_textureFormat[ii].m_fmtSrv;
+								if (DXGI_FORMAT_UNKNOWN != fmtDepthSampling)
+								{
+									D3D11_FEATURE_DATA_FORMAT_SUPPORT dataSampling;
+									dataSampling.InFormat = fmtDepthSampling;
+									hr = m_device->CheckFeatureSupport(D3D11_FEATURE_FORMAT_SUPPORT, &dataSampling, sizeof(dataSampling));
+									if (SUCCEEDED(hr))
+									{
+										support |= 0 != (dataSampling.OutFormatSupport & (0
+											| D3D11_FORMAT_SUPPORT_MULTISAMPLE_LOAD
+											))
+											? BGFX_CAPS_FORMAT_TEXTURE_MSAA
+											: BGFX_CAPS_FORMAT_TEXTURE_NONE
+											;
+									}
+									else
+									{
+										BX_TRACE("CheckFeatureSupport depth srv failed with %x for format %s.", hr, getName(TextureFormat::Enum(ii)));
+									}
+								}
 							}
 
 							if (0 != (support & BGFX_CAPS_FORMAT_TEXTURE_IMAGE_READ) )
@@ -1540,6 +1586,13 @@ namespace bgfx { namespace d3d11
 										| D3D11_FORMAT_SUPPORT_TEXTURECUBE
 										) )
 										? BGFX_CAPS_FORMAT_TEXTURE_CUBE_SRGB
+										: BGFX_CAPS_FORMAT_TEXTURE_NONE
+										;
+
+								support |= 0 != (data.OutFormatSupport & (0
+										| D3D11_FORMAT_SUPPORT_DISPLAY
+										) )
+										? BGFX_CAPS_FORMAT_TEXTURE_BACKBUFFER
 										: BGFX_CAPS_FORMAT_TEXTURE_NONE
 										;
 							}
@@ -1689,6 +1742,7 @@ namespace bgfx { namespace d3d11
 			m_agsDll = NULL;
 
 			m_deviceCtx->ClearState();
+			m_deviceCtx->Flush();
 
 			invalidateCache();
 
@@ -1836,9 +1890,9 @@ namespace bgfx { namespace d3d11
 			m_program[_handle.idx].destroy();
 		}
 
-		void* createTexture(TextureHandle _handle, const Memory* _mem, uint64_t _flags, uint8_t _skip) override
+		void* createTexture(TextureHandle _handle, const Memory* _mem, uint64_t _flags, uint8_t _skip, uint64_t _external) override
 		{
-			return m_textures[_handle.idx].create(_mem, _flags, _skip);
+			return m_textures[_handle.idx].create(_mem, _flags, _skip, _external);
 		}
 
 		void updateTexture(TextureHandle _handle, uint8_t _side, uint8_t _mip, const Rect& _rect, uint16_t _z, uint16_t _depth, uint16_t _pitch, const Memory* _mem) override
@@ -1890,7 +1944,7 @@ namespace bgfx { namespace d3d11
 			bx::write(&writer, tc, bx::ErrorAssert{});
 
 			texture.destroy();
-			texture.create(mem, texture.m_flags, 0);
+			texture.create(mem, texture.m_flags, 0, 0);
 
 			release(mem);
 		}
@@ -2005,12 +2059,14 @@ namespace bgfx { namespace d3d11
 					colorFormat = TextureFormat::Enum(i);
 					break;
 				}
+
 				if (s_textureFormat[i].m_fmtSrgb == backBufferDesc.Format)
 				{
 					colorFormat = TextureFormat::Enum(i);
 					break;
 				}
 			}
+
 			if (colorFormat == TextureFormat::Enum::Count)
 			{
 				BX_TRACE("Unable to capture screenshot %s.", _filePath);
@@ -2050,69 +2106,18 @@ namespace bgfx { namespace d3d11
 
 				D3D11_MAPPED_SUBRESOURCE mapped;
 				DX_CHECK(m_deviceCtx->Map(texture, 0, D3D11_MAP_READ, 0, &mapped) );
-				if (colorFormat == TextureFormat::RGBA8)
-				{
-					bimg::imageSwizzleBgra8(
-						  mapped.pData
-						, mapped.RowPitch
-						, backBufferDesc.Width
-						, backBufferDesc.Height
-						, mapped.pData
-						, mapped.RowPitch
-						);
-					g_callback->screenShot(
-						  _filePath
-						, backBufferDesc.Width
-						, backBufferDesc.Height
-						, mapped.RowPitch
-						, mapped.pData
-						, backBufferDesc.Height*mapped.RowPitch
-						, false
-						);
-				}
-				else if (colorFormat == TextureFormat::BGRA8)
-				{
-					g_callback->screenShot(
-						  _filePath
-						, backBufferDesc.Width
-						, backBufferDesc.Height
-						, mapped.RowPitch
-						, mapped.pData
-						, backBufferDesc.Height*mapped.RowPitch
-						, false
-						);
-				}
-				else
-				{
-					const uint8_t dstBpp = bimg::getBitsPerPixel(bimg::TextureFormat::BGRA8);
-					const uint32_t dstPitch = backBufferDesc.Width * dstBpp / 8;
-					const uint32_t dstSize = backBufferDesc.Height * dstPitch;
 
-					void* dst = bx::alloc(g_allocator, dstSize);
-					bimg::imageConvert(
-						  dst
-						, dstBpp
-						, bimg::getPack(bimg::TextureFormat::BGRA8)
-						, mapped.pData
-						, bimg::getBitsPerPixel(bimg::TextureFormat::Enum(colorFormat))
-						, bimg::getUnpack(bimg::TextureFormat::Enum(colorFormat))
-						, backBufferDesc.Width
-						, backBufferDesc.Height
-						, 1
-						, mapped.RowPitch
-						, dstPitch
+				g_callback->screenShot(
+					  _filePath
+					, backBufferDesc.Width
+					, backBufferDesc.Height
+					, mapped.RowPitch
+					, colorFormat
+					, mapped.pData
+					, backBufferDesc.Height*mapped.RowPitch
+					, false
 					);
-					g_callback->screenShot(
-						  _filePath
-						, backBufferDesc.Width
-						, backBufferDesc.Height
-						, dstPitch
-						, dst
-						, backBufferDesc.Height*dstPitch
-						, false
-						);
-					bx::free(g_allocator, dst);
-				}
+
 				m_deviceCtx->Unmap(texture, 0);
 
 				DX_RELEASE(texture, 0);
@@ -2189,7 +2194,7 @@ namespace bgfx { namespace d3d11
 
 		void submitUniformCache(UniformCacheState& _ucs, uint16_t _view);
 
-		void submit(Frame* _render, ClearQuad& _clearQuad, TextVideoMemBlitter& _textVideoMemBlitter) override;
+		void submit(Frame* _render, const ClearQuad& _clearQuad, const MipGen& _mipGen, TextVideoMemBlitter& _textVideoMemBlitter) override;
 
 		void dbgTextRenderBegin(TextVideoMemBlitter& _blitter) override
 		{
@@ -4069,125 +4074,6 @@ namespace bgfx { namespace d3d11
 		BufferD3D11::create(_size, _data, _flags, stride, true);
 	}
 
-	static bool hasDepthOp(const void* _code, uint32_t _size)
-	{
-		bx::MemoryReader rd(_code, _size);
-
-		bx::Error err;
-		DxbcContext dxbc;
-		read(&rd, dxbc, &err);
-
-		struct FindDepthOp
-		{
-			FindDepthOp()
-				: m_found(false)
-			{
-			}
-
-			static bool find(uint32_t /*_offset*/, const DxbcInstruction& _instruction, void* _userData)
-			{
-				FindDepthOp& out = *reinterpret_cast<FindDepthOp*>(_userData);
-				if (_instruction.opcode == DxbcOpcode::DISCARD
-				|| (0 != _instruction.numOperands &&  DxbcOperandType::OutputDepth == _instruction.operand[0].type) )
-				{
-					out.m_found = true;
-					return false;
-				}
-
-				return true;
-			}
-
-			bool m_found;
-
-		} find;
-
-		parse(dxbc.shader, FindDepthOp::find, &find);
-
-		return find.m_found;
-	}
-
-	static void patchUAVRegisterByteCode(DxbcInstruction& _instruction, void* _userData)
-	{
-		BX_UNUSED(_userData);
-
-		switch (_instruction.opcode)
-		{
-		case DxbcOpcode::DCL_UNORDERED_ACCESS_VIEW_TYPED:
-			{
-				DxbcOperand& operand = _instruction.operand[0];
-				operand.regIndex[0] += 16;
-
-				BX_ASSERT(operand.regIndex[1] == 0 && operand.regIndex[2] == 0, "Unexpected values");
-			}
-			break;
-
-		case DxbcOpcode::DCL_UNORDERED_ACCESS_VIEW_RAW:
-			BX_ASSERT(false, "Unsupported UAV access");
-			break;
-
-		case DxbcOpcode::DCL_UNORDERED_ACCESS_VIEW_STRUCTURED:
-			BX_ASSERT(false, "Unsupported UAV access");
-			break;
-
-		case DxbcOpcode::LD_UAV_TYPED:
-			{
-				DxbcOperand& operand = _instruction.operand[2];
-				operand.regIndex[0] += 16;
-
-				BX_ASSERT(operand.regIndex[1] == 0 && operand.regIndex[2] == 0, "Unexpected values");
-			}
-			break;
-
-		case DxbcOpcode::STORE_UAV_TYPED:
-			{
-				DxbcOperand& operand = _instruction.operand[0];
-				operand.regIndex[0] += 16;
-
-				BX_ASSERT(operand.regIndex[1] == 0 && operand.regIndex[2] == 0, "Unexpected values");
-			}
-			break;
-
-		default:
-			break;
-		}
-	}
-
-	static void patchUAVRegisterDebugInfo(DxbcSPDB& _spdb)
-	{
-		if (!_spdb.debugCode.empty())
-		{
-			// 'register( u[xx] )'
-			char* ptr = (char*)_spdb.debugCode.data();
-			while (ptr < (char*)_spdb.debugCode.data() + _spdb.debugCode.size() - 3)
-			{
-				if (*(ptr+1) == ' '
-				&&	*(ptr+2) == 'u'
-				&&	*(ptr+3) == '[')
-				{
-					char* startPtr = ptr+4;
-					char* endPtr = ptr+4;
-
-					while (*endPtr != ']')
-					{
-						endPtr++;
-					}
-
-					uint32_t regNum = 0;
-					uint32_t regLen = uint32_t(endPtr - startPtr);
-					bx::fromString(&regNum, bx::StringView(startPtr, regLen));
-
-					regNum += 16;
-					uint32_t len = bx::toString(startPtr, regLen+2, regNum);
-					*(startPtr + len) = ']';
-
-					break;
-				}
-
-				++ptr;
-			}
-		}
-	}
-
 	void ShaderD3D11::create(const Memory* _mem)
 	{
 		bx::MemoryReader reader(_mem->data, _mem->size);
@@ -4318,33 +4204,8 @@ namespace bgfx { namespace d3d11
 
 		const Memory* temp = NULL;
 
-		if (!isShaderType(magic, 'C'))
-		{
-			bx::MemoryReader rd(code, shaderSize);
-
-			DxbcContext dxbc;
-			read(&rd, dxbc, bx::ErrorAssert{});
-
-			bool patchShader = !dxbc.shader.aon9;
-			if (patchShader)
-			{
-				union { uint32_t offset; void* ptr; } cast = { 0 };
-				filter(dxbc.shader, dxbc.shader, patchUAVRegisterByteCode, cast.ptr);
-				patchUAVRegisterDebugInfo(dxbc.spdb);
-
-				temp = alloc(shaderSize);
-				bx::StaticMemoryBlockWriter wr(temp->data, temp->size);
-
-				int32_t size = write(&wr, dxbc, &err);
-				dxbcHash(temp->data + 20, size - 20, temp->data + 4);
-
-				code = temp->data;
-			}
-		}
-
 		if (isShaderType(magic, 'F') )
 		{
-			m_hasDepthOp = hasDepthOp(code, shaderSize);
 			DX_CHECK(s_renderD3D11->m_device->CreatePixelShader(code, shaderSize, NULL, &m_pixelShader) );
 			BGFX_FATAL(NULL != m_ptr, bgfx::Fatal::InvalidShader, "Failed to create fragment shader.");
 		}
@@ -4463,7 +4324,7 @@ namespace bgfx { namespace d3d11
 		}
 	}
 
-	void* TextureD3D11::create(const Memory* _mem, uint64_t _flags, uint8_t _skip)
+	void* TextureD3D11::create(const Memory* _mem, uint64_t _flags, uint8_t _skip, uint64_t _external)
 	{
 		void* directAccessPtr = NULL;
 
@@ -4588,12 +4449,14 @@ namespace bgfx { namespace d3d11
 				}
 			}
 
-			const bool writeOnly    = 0 != (m_flags&(BGFX_TEXTURE_RT_WRITE_ONLY|BGFX_TEXTURE_READ_BACK) );
-			const bool computeWrite = 0 != (m_flags&BGFX_TEXTURE_COMPUTE_WRITE);
-			const bool renderTarget = 0 != (m_flags&BGFX_TEXTURE_RT_MASK);
-			const bool srgb         = 0 != (m_flags&BGFX_TEXTURE_SRGB);
-			const bool blit         = 0 != (m_flags&BGFX_TEXTURE_BLIT_DST);
-			const bool readBack     = 0 != (m_flags&BGFX_TEXTURE_READ_BACK);
+			const bool writeOnly      = 0 != (m_flags & (BGFX_TEXTURE_RT_WRITE_ONLY|BGFX_TEXTURE_READ_BACK) );
+			const bool computeWrite   = 0 != (m_flags & BGFX_TEXTURE_COMPUTE_WRITE);
+			const bool renderTarget   = 0 != (m_flags & BGFX_TEXTURE_RT_MASK);
+			const bool srgb           = 0 != (m_flags & BGFX_TEXTURE_SRGB);
+			const bool blit           = 0 != (m_flags & BGFX_TEXTURE_BLIT_DST);
+			const bool readBack       = 0 != (m_flags & BGFX_TEXTURE_READ_BACK);
+			const bool externalShared = 0 != (m_flags & BGFX_TEXTURE_EXTERNAL_SHARED);
+
 			const uint32_t msaaQuality = bx::uint32_satsub( (m_flags&BGFX_TEXTURE_RT_MSAA_MASK)>>BGFX_TEXTURE_RT_MSAA_SHIFT, 1);
 			const DXGI_SAMPLE_DESC& msaa = s_msaa[msaaQuality];
 			const bool msaaSample  = true
@@ -4630,12 +4493,29 @@ namespace bgfx { namespace d3d11
 				srvd.Format = getSrvFormat();
 			}
 
+			const bool external = 0 != _external;
 			const bool directAccess = s_renderD3D11->m_directAccessSupport
 				&& !renderTarget
 				&& !readBack
 				&& !blit
 				&& !writeOnly
+				&& !external
+				&& !externalShared
 				;
+
+			if (external)
+			{
+				if (externalShared)
+				{
+					DX_CHECK(s_renderD3D11->m_device->OpenSharedResource(HANDLE(_external), IID_ID3D11Resource, (void**)&m_ptr) );
+				}
+				else
+				{
+					m_ptr = (ID3D11Resource*)(_external);
+				}
+
+				m_flags |= BGFX_SAMPLER_INTERNAL_SHARED;
+			}
 
 			switch (m_type)
 			{
@@ -4726,6 +4606,8 @@ namespace bgfx { namespace d3d11
 						}
 					}
 
+					desc.MiscFlags |= externalShared ? D3D11_RESOURCE_MISC_SHARED : 0;
+
 					if (needResolve)
 					{
 						DX_CHECK(s_renderD3D11->m_device->CreateTexture2D(&desc, NULL, &m_rt2d) );
@@ -4733,13 +4615,16 @@ namespace bgfx { namespace d3d11
 						desc.SampleDesc = s_msaa[0];
 					}
 
-					if (directAccess)
+					if (!external)
 					{
-						directAccessPtr = m_dar.createTexture2D(&desc, kk == 0 ? NULL : srd, &m_texture2d);
-					}
-					else
-					{
-						DX_CHECK(s_renderD3D11->m_device->CreateTexture2D(&desc, kk == 0 ? NULL : srd, &m_texture2d) );
+						if (directAccess)
+						{
+							directAccessPtr = m_dar.createTexture2D(&desc, kk == 0 ? NULL : srd, &m_texture2d);
+						}
+						else
+						{
+							DX_CHECK(s_renderD3D11->m_device->CreateTexture2D(&desc, kk == 0 ? NULL : srd, &m_texture2d) );
+						}
 					}
 				}
 				break;
@@ -4782,16 +4667,25 @@ namespace bgfx { namespace d3d11
 					srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
 					srvd.Texture3D.MipLevels = ti.numMips;
 
-					if (directAccess)
+					desc.MiscFlags |= externalShared ? D3D11_RESOURCE_MISC_SHARED : 0;
+
+					if (!external)
 					{
-						directAccessPtr = m_dar.createTexture3D(&desc, kk == 0 ? NULL : srd, &m_texture3d);
-					}
-					else
-					{
-						DX_CHECK(s_renderD3D11->m_device->CreateTexture3D(&desc, kk == 0 ? NULL : srd, &m_texture3d) );
+						if (directAccess)
+						{
+							directAccessPtr = m_dar.createTexture3D(&desc, kk == 0 ? NULL : srd, &m_texture3d);
+						}
+						else
+						{
+							DX_CHECK(s_renderD3D11->m_device->CreateTexture3D(&desc, kk == 0 ? NULL : srd, &m_texture3d) );
+						}
 					}
 				}
 				break;
+			}
+
+			if (externalShared)
+			{
 			}
 
 			if (!writeOnly)
@@ -4829,6 +4723,7 @@ namespace bgfx { namespace d3d11
 		DX_RELEASE(m_rt, 0);
 		DX_RELEASE(m_srv, 0);
 		DX_RELEASE(m_uav, 0);
+
 		if (0 == (m_flags & BGFX_SAMPLER_INTERNAL_SHARED) )
 		{
 			DX_RELEASE(m_ptr, 0);
@@ -4980,10 +4875,13 @@ namespace bgfx { namespace d3d11
 			}
 		}
 
-		const bool renderTarget = 0 != (m_flags&BGFX_TEXTURE_RT_MASK);
-		if (renderTarget
+		const bool renderTarget = 0 != (m_flags  & BGFX_TEXTURE_RT_MASK);
+		const bool autoGenMips  = 0 != (_resolve & BGFX_RESOLVE_AUTO_GEN_MIPS);
+
+		if (autoGenMips
+		&&  renderTarget
 		&&  1 < m_numMips
-		&&  0 != (_resolve & BGFX_RESOLVE_AUTO_GEN_MIPS) )
+		   )
 		{
 			deviceCtx->GenerateMips(m_srv);
 		}
@@ -5085,7 +4983,6 @@ namespace bgfx { namespace d3d11
 		DX_CHECK(device->CreateDepthStencilView(depthStencil, NULL, &m_dsv) );
 		DX_RELEASE(depthStencil, 0);
 
-		m_srv[0]   = NULL;
 		m_nwh      = _nwh;
 		m_denseIdx = _denseIdx;
 		m_num      = 1;
@@ -5310,9 +5207,13 @@ namespace bgfx { namespace d3d11
 							break;
 						}
 
-						D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-						texture.m_srv->GetDesc(&srvDesc);
-						DX_CHECK(s_renderD3D11->m_device->CreateShaderResourceView(texture.m_ptr, &srvDesc, &m_srv[m_num]));
+						if (NULL != texture.m_srv)
+						{
+							D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+							texture.m_srv->GetDesc(&srvDesc);
+							DX_CHECK(s_renderD3D11->m_device->CreateShaderResourceView(texture.m_ptr, &srvDesc, &m_srv[m_num]));
+						}
+
 						m_num++;
 					}
 					else
@@ -5689,7 +5590,7 @@ namespace bgfx { namespace d3d11
 		}
 	}
 
-	void RendererContextD3D11::submit(Frame* _render, ClearQuad& _clearQuad, TextVideoMemBlitter& _textVideoMemBlitter)
+	void RendererContextD3D11::submit(Frame* _render, const ClearQuad& _clearQuad, const MipGen& /*_mipGen*/, TextVideoMemBlitter& _textVideoMemBlitter)
 	{
 		if (m_lost)
 		{
@@ -6205,7 +6106,7 @@ namespace bgfx { namespace d3d11
 
 						const ShaderD3D11* fsh = program.m_fsh;
 						if (NULL != fsh
-						&& (NULL != m_currentColor || fsh->m_hasDepthOp) )
+						&& (NULL != m_currentColor) )
 						{
 							deviceCtx->PSSetShader(fsh->m_pixelShader, NULL, 0);
 							deviceCtx->PSSetConstantBuffers(0, 1, &fsh->m_buffer);
