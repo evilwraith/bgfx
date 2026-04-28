@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2025 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2026 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
  */
 
@@ -62,24 +62,6 @@ public:
 		{
 			uint32_t* indices = (uint32_t*)(_ib->data + ii * sizeof(uint32_t) );
 			*indices = m_cachePermutation[*indices];
-		}
-	}
-
-	static void remapIndices(uint32_t* _indices, uint32_t _num)
-	{
-		uint32_t target = 0;
-		for (uint32_t i = 0; i < _num; i++)
-		{
-			uint32_t map = _indices[i];
-			if (i != map)
-			{
-				_indices[i] = _indices[map];
-			}
-			else
-			{
-				_indices[i] = target;
-				++target;
-			}
 		}
 	}
 
@@ -154,8 +136,23 @@ public:
 			bx::free(entry::getAllocator(), m_cacheWeld);
 			m_cacheWeld = (uint32_t*)bx::alloc(entry::getAllocator(), numVertices * sizeof(uint32_t) );
 
-			m_totalVertices	= bgfx::weldVertices(m_cacheWeld, _mesh->m_layout, vbData, numVertices, true, 0.00001f);
-			remapIndices(m_cacheWeld, numVertices);
+			m_totalVertices = weldVertices(m_cacheWeld, _mesh->m_layout, vbData, numVertices, true);
+
+			// Compact remap to sequential indices.
+			uint32_t target = 0;
+			for (uint32_t ii = 0; ii < numVertices; ++ii)
+			{
+				uint32_t map = m_cacheWeld[ii];
+				if (ii != map)
+				{
+					m_cacheWeld[ii] = m_cacheWeld[map];
+				}
+				else
+				{
+					m_cacheWeld[ii] = target++;
+				}
+			}
+			m_totalVertices = target;
 		}
 
 		const bgfx::Memory* vb = mergeVertices(

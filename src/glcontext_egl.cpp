@@ -1,5 +1,5 @@
 /*
- * Copyright 2011-2025 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2026 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
  */
 
@@ -345,7 +345,12 @@ WL_EGL_IMPORT
 				BGFX_FATAL(ok, Fatal::UnableToInitialize, "Could not set API! error: %d", eglGetError());
 			}
 
-			const bool hasEglAndroidRecordable = !bx::findIdentifierMatch(extensions, "EGL_ANDROID_recordable").isEmpty();
+			const bool isAngle = !bx::findIdentifierMatch(version, "ANGLE").isEmpty();
+
+			const bool hasEglAndroidRecordable = true
+				&& !isAngle // Extension reports it exist with ANGLE, but initialization with it fails.
+				&& !bx::findIdentifierMatch(extensions, "EGL_ANDROID_recordable").isEmpty()
+				;
 
 			const uint32_t glVersion = !!BGFX_CONFIG_RENDERER_OPENGL
 				? BGFX_CONFIG_RENDERER_OPENGL

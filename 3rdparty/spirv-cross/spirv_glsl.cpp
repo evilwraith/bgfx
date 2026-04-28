@@ -206,10 +206,10 @@ static BufferPackingStandard packing_to_substruct_packing(BufferPackingStandard 
 
 void CompilerGLSL::init()
 {
-	if (ir.source.known)
+	if (!ir.sources.empty() && ir.sources.front().known)
 	{
-		options.es = ir.source.es;
-		options.version = ir.source.version;
+		options.es = ir.sources.front().es;
+		options.version = ir.sources.front().version;
 	}
 
 	// Query the locale to see what the decimal point is.
@@ -382,6 +382,7 @@ void CompilerGLSL::reset(uint32_t iteration_count)
 	});
 
 	ir.for_each_typed_id<SPIRVariable>([&](uint32_t, SPIRVariable &var) { var.dependees.clear(); });
+	ir.for_each_typed_id<SPIRBlock>([&](uint32_t, SPIRBlock &block) { block.rearm_dominated_variables.clear(); });
 
 	ir.reset_all_of_type<SPIRExpression>();
 	ir.reset_all_of_type<SPIRAccessChain>();
@@ -807,7 +808,10 @@ string CompilerGLSL::compile()
 	// The body was implemented in lieu of main().
 	if (interlocked_is_complex)
 	{
-		statement("void main()");
+		if (options.use_entry_point_name)
+			statement("void ", get_entry_point().name, "()");
+		else
+			statement("void main()");
 		begin_scope();
 		statement("// Interlocks were used in a way not compatible with GLSL, this is very slow.");
 		statement("SPIRV_Cross_beginInvocationInterlock();");
@@ -817,7 +821,8 @@ string CompilerGLSL::compile()
 	}
 
 	// Entry point in GLSL is always main().
-	get_entry_point().name = "main";
+	if (!options.use_entry_point_name)
+		get_entry_point().name = "main";
 
 	return buffer.str();
 }
@@ -1335,9 +1340,6 @@ void CompilerGLSL::emit_struct(SPIRType &type)
 		emitted = true;
 	}
 
-	if (has_extended_decoration(type.self, SPIRVCrossDecorationPaddingTarget))
-		emit_struct_padding_target(type);
-
 	end_scope_decl();
 
 	if (emitted)
@@ -1755,10 +1757,32 @@ uint32_t CompilerGLSL::type_to_packed_size(const SPIRType &type, const Bitset &f
 	{
 		uint32_t packed_size = to_array_size_literal(type) * type_to_packed_array_stride(type, flags, packing);
 
-		// For arrays of vectors and matrices in HLSL, the last element has a size which depends on its vector size,
-		// so that it is possible to pack other vectors into the last element.
-		if (packing_is_hlsl(packing) && type.basetype != SPIRType::Struct)
-			packed_size -= (4 - type.vecsize) * (type.width / 8);
+		if (packing_is_hlsl(packing))
+		{
+			// For arrays of vectors and matrices in HLSL, the last element has a size which depends on its vector size,
+			// so that it is possible to pack other vectors into the last element.
+			if (type.basetype != SPIRType::Struct)
+			{
+				if (flags.get(DecorationRowMajor) && type.columns > 1)
+					packed_size -= (4 - type.columns) * (type.width / 8);
+				else
+					packed_size -= (4 - type.vecsize) * (type.width / 8);
+			}
+			else
+			{
+				const auto *base_type = &type;
+				while (is_array(*base_type))
+				{
+					auto &new_type = get<SPIRType>(base_type->parent_type);
+					if (!is_array(new_type))
+						break;
+					base_type = &new_type;
+				}
+
+				packed_size -= type_to_packed_array_stride(*base_type, flags, packing);
+				packed_size += type_to_packed_size(get<SPIRType>(base_type->parent_type), flags, packing);
+			}
+		}
 
 		return packed_size;
 	}
@@ -1777,15 +1801,27 @@ uint32_t CompilerGLSL::type_to_packed_size(const SPIRType &type, const Bitset &f
 			uint32_t packed_alignment = type_to_packed_alignment(member_type, member_flags, packing);
 			uint32_t alignment = max(packed_alignment, pad_alignment);
 
-			// The next member following a struct member is aligned to the base alignment of the struct that came before.
-			// GL 4.5 spec, 7.6.2.2.
-			if (member_type.basetype == SPIRType::Struct)
-				pad_alignment = packed_alignment;
+			uint32_t element_size = type_to_packed_size(member_type, member_flags, packing);
+			pad_alignment = 1;
+
+			if (packing_is_hlsl(packing))
+			{
+				// HLSL is primarily a "cannot-straddle-vec4" language.
+				uint32_t begin_word = size / 16;
+				uint32_t end_word = (size + element_size - 1) / 16;
+				if (begin_word != end_word)
+					alignment = max<uint32_t>(alignment, 16u);
+			}
 			else
-				pad_alignment = 1;
+			{
+				// The next member following a struct member is aligned to the base alignment of the struct that came before.
+				// GL 4.5 spec, 7.6.2.2.
+				if (member_type.basetype == SPIRType::Struct)
+					pad_alignment = packed_alignment;
+			}
 
 			size = (size + alignment - 1) & ~(alignment - 1);
-			size += type_to_packed_size(member_type, member_flags, packing);
+			size += element_size;
 		}
 	}
 	else
@@ -1803,9 +1839,7 @@ uint32_t CompilerGLSL::type_to_packed_size(const SPIRType &type, const Bitset &f
 
 			if (flags.get(DecorationColMajor) && type.columns > 1)
 			{
-				if (packing_is_vec4_padded(packing))
-					size = type.columns * 4 * base_alignment;
-				else if (type.vecsize == 3)
+				if (packing_is_vec4_padded(packing) || type.vecsize == 3)
 					size = type.columns * 4 * base_alignment;
 				else
 					size = type.columns * type.vecsize * base_alignment;
@@ -1813,9 +1847,7 @@ uint32_t CompilerGLSL::type_to_packed_size(const SPIRType &type, const Bitset &f
 
 			if (flags.get(DecorationRowMajor) && type.vecsize > 1)
 			{
-				if (packing_is_vec4_padded(packing))
-					size = type.vecsize * 4 * base_alignment;
-				else if (type.columns == 3)
+				if (packing_is_vec4_padded(packing) || type.columns == 3)
 					size = type.vecsize * 4 * base_alignment;
 				else
 					size = type.vecsize * type.columns * base_alignment;
@@ -1824,7 +1856,12 @@ uint32_t CompilerGLSL::type_to_packed_size(const SPIRType &type, const Bitset &f
 			// For matrices in HLSL, the last element has a size which depends on its vector size,
 			// so that it is possible to pack other vectors into the last element.
 			if (packing_is_hlsl(packing) && type.columns > 1)
-				size -= (4 - type.vecsize) * (type.width / 8);
+			{
+				if (flags.get(DecorationRowMajor))
+					size -= (4 - type.columns) * (type.width / 8);
+				else
+					size -= (4 - type.vecsize) * (type.width / 8);
+			}
 		}
 	}
 
@@ -1915,7 +1952,7 @@ bool CompilerGLSL::buffer_is_packing_standard(const SPIRType &type, BufferPackin
 
 		// The next member following a struct member is aligned to the base alignment of the struct that came before.
 		// GL 4.5 spec, 7.6.2.2.
-		if (memb_type.basetype == SPIRType::Struct && !memb_type.pointer)
+		if (!packing_is_hlsl(packing) && memb_type.basetype == SPIRType::Struct && !memb_type.pointer)
 			pad_alignment = packed_alignment;
 		else
 			pad_alignment = 1;
@@ -1943,13 +1980,16 @@ bool CompilerGLSL::buffer_is_packing_standard(const SPIRType &type, BufferPackin
 			}
 
 			// Verify array stride rules.
-			if (is_array(memb_type) &&
-			    type_to_packed_array_stride(memb_type, member_flags, packing) !=
-			    type_struct_member_array_stride(type, i))
+			if (is_array(memb_type))
 			{
-				if (failed_validation_index)
-					*failed_validation_index = i;
-				return false;
+				auto packed_array_stride = type_to_packed_array_stride(memb_type, member_flags, packing);
+				auto member_array_stride = type_struct_member_array_stride(type, i);
+				if (packed_array_stride != member_array_stride)
+				{
+					if (failed_validation_index)
+						*failed_validation_index = i;
+					return false;
+				}
 			}
 
 			// Verify that sub-structs also follow packing rules.
@@ -10834,6 +10874,15 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				access_meshlet_position_y = true;
 			}
 
+			if (get<SPIRType>(type->parent_type).op == OpTypeStruct &&
+			    has_decoration(type->parent_type, DecorationArrayStride))
+			{
+				uint32_t native_stride = get_decoration(type->parent_type, DecorationArrayStride);
+				uint32_t array_stride = get_decoration(type_id, DecorationArrayStride);
+				if (native_stride != array_stride)
+					expr += ".data";
+			}
+
 			type_id = type->parent_type;
 			type = &get<SPIRType>(type_id);
 
@@ -10919,6 +10968,7 @@ string CompilerGLSL::access_chain_internal(uint32_t base, const uint32_t *indice
 				physical_type = 0;
 
 			row_major_matrix_needs_conversion = member_is_non_native_row_major_matrix(*type, index);
+			type_id = type->member_types[index];
 			type = &get<SPIRType>(type->member_types[index]);
 		}
 		// Matrix -> Vector
@@ -11130,9 +11180,9 @@ string CompilerGLSL::to_flattened_struct_member(const string &basename, const SP
 	return ret;
 }
 
-uint32_t CompilerGLSL::get_physical_type_stride(const SPIRType &) const
+uint32_t CompilerGLSL::get_physical_type_id_stride(TypeID) const
 {
-	SPIRV_CROSS_THROW("Invalid to call get_physical_type_stride on a backend without native pointer support.");
+	SPIRV_CROSS_THROW("Invalid to call get_physical_type_id_stride on a backend without native pointer support.");
 }
 
 string CompilerGLSL::access_chain(uint32_t base, const uint32_t *indices, uint32_t count, const SPIRType &target_type,
@@ -11193,13 +11243,13 @@ string CompilerGLSL::access_chain(uint32_t base, const uint32_t *indices, uint32
 				// If there is a mismatch we have to go via 64-bit pointer arithmetic :'(
 				// Using packed hacks only gets us so far, and is not designed to deal with pointer to
 				// random values. It works for structs though.
-				auto &pointee_type = get_pointee_type(get<SPIRType>(type_id));
-				uint32_t physical_stride = get_physical_type_stride(pointee_type);
+				TypeID pointee_type_id = get_pointee_type_id(type_id);
+				uint32_t physical_stride = get_physical_type_id_stride(pointee_type_id);
 				uint32_t requested_stride = get_decoration(type_id, DecorationArrayStride);
 				if (physical_stride != requested_stride)
 				{
 					flags |= ACCESS_CHAIN_PTR_CHAIN_POINTER_ARITH_BIT;
-					if (is_vector(pointee_type))
+					if (is_vector(get<SPIRType>(pointee_type_id)))
 						flags |= ACCESS_CHAIN_PTR_CHAIN_CAST_TO_SCALAR_BIT;
 				}
 			}
@@ -16300,10 +16350,6 @@ void CompilerGLSL::emit_struct_member(const SPIRType &type, uint32_t member_type
 	          variable_decl(membertype, to_member_name(type, index)), ";");
 }
 
-void CompilerGLSL::emit_struct_padding_target(const SPIRType &)
-{
-}
-
 string CompilerGLSL::flags_to_qualifiers_glsl(const SPIRType &type, uint32_t id, const Bitset &flags)
 {
 	// GL_EXT_buffer_reference variables can be marked as restrict.
@@ -17342,6 +17388,8 @@ void CompilerGLSL::emit_function_prototype(SPIRFunction &func, const Bitset &ret
 		// and interlock the entire shader ...
 		if (interlocked_is_complex)
 			decl += "spvMainInterlockedBody";
+		else if (options.use_entry_point_name)
+			decl += get_entry_point().name;
 		else
 			decl += "main";
 

@@ -1,9 +1,11 @@
 /*
- * Copyright 2011-2025 Branimir Karadzic. All rights reserved.
+ * Copyright 2011-2026 Branimir Karadzic. All rights reserved.
  * License: https://github.com/bkaradzic/bgfx/blob/master/LICENSE
  */
 
 #include "shaderc.h"
+
+#if SHADERC_CONFIG_HAS_TINT && SHADERC_CONFIG_HAS_GLSLANG
 
 #include <iostream> // std::cout
 
@@ -49,8 +51,6 @@ namespace bgfx
 namespace stl = tinystl;
 
 #include "../../src/shader.h"
-#include "../../src/shader_spirv.h"
-#include "../../3rdparty/khronos/vulkan-local/vulkan.h"
 
 namespace bgfx { namespace wgsl
 {
@@ -764,7 +764,6 @@ namespace bgfx { namespace wgsl
 							.allowed_features = {
 								.extensions =
 								{
-									tint::wgsl::Extension::kChromiumInternalGraphite,
 								},
 								.features =
 								{
@@ -940,3 +939,18 @@ namespace bgfx { namespace wgsl
 	}
 
 } // namespace bgfx
+
+#else // SHADERC_CONFIG_HAS_TINT && SHADERC_CONFIG_HAS_GLSLANG
+
+namespace bgfx
+{
+	bool compileWgslShader(const Options& _options, uint32_t _version, const std::string& _code, bx::WriterI* _shaderWriter, bx::WriterI* _messageWriter)
+	{
+		BX_UNUSED(_options, _version, _code, _shaderWriter);
+		bx::Error messageErr;
+		bx::write(_messageWriter, &messageErr, "WGSL compiler (tint) is not compiled in.\n");
+		return false;
+	}
+} // namespace bgfx
+
+#endif // SHADERC_CONFIG_HAS_TINT && SHADERC_CONFIG_HAS_GLSLANG

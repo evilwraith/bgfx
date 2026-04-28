@@ -45,9 +45,7 @@ constexpr uint32_t kExtInstOpInIdx = 1;
 constexpr uint32_t kInterpolantInIdx = 2;
 constexpr uint32_t kCooperativeMatrixLoadSourceAddrInIdx = 0;
 constexpr uint32_t kDebugDeclareVariableInIdx = 3;
-constexpr uint32_t kDebugValueLocalVariableInIdx = 2;
 constexpr uint32_t kDebugValueValueInIdx = 3;
-constexpr uint32_t kDebugValueExpressionInIdx = 4;
 
 // Sorting functor to present annotation instructions in an easy-to-process
 // order. The functor orders by opcode first and falls back on unique id
@@ -130,6 +128,7 @@ void AggressiveDCEPass::AddStores(Function* func, uint32_t ptrId) {
     switch (user->opcode()) {
       case spv::Op::OpAccessChain:
       case spv::Op::OpInBoundsAccessChain:
+      case spv::Op::OpUntypedAccessChainKHR:
       case spv::Op::OpCopyObject:
         this->AddStores(func, user->result_id());
         break;
@@ -162,14 +161,16 @@ bool AggressiveDCEPass::AllExtensionsSupported() const {
     if (extensions_allowlist_.find(extName) == extensions_allowlist_.end())
       return false;
   }
-  // Only allow NonSemantic.Shader.DebugInfo.100, we cannot safely optimise
-  // around unknown extended instruction sets even if they are non-semantic
+  // Only allow NonSemantic.Shader.DebugInfo (any version) and
+  // NonSemantic.DebugPrintf; we cannot safely optimise around unknown extended
+  // instruction sets even if they are non-semantic.
   for (auto& inst : context()->module()->ext_inst_imports()) {
     assert(inst.opcode() == spv::Op::OpExtInstImport &&
            "Expecting an import of an extension's instruction set.");
     const std::string extension_name = inst.GetInOperand(0).AsString();
     if (spvtools::utils::starts_with(extension_name, "NonSemantic.") &&
-        (extension_name != "NonSemantic.Shader.DebugInfo.100") &&
+        !spvtools::utils::starts_with(extension_name,
+                                      "NonSemantic.Shader.DebugInfo.") &&
         (extension_name != "NonSemantic.DebugPrintf")) {
       return false;
     }
@@ -293,7 +294,7 @@ Pass::Status AggressiveDCEPass::ProcessDebugInformation(
     bool succeeded = (*bi)->WhileEachInst([this](Instruction* inst) {
       if (!inst->IsNonSemanticInstruction()) return true;
 
-      if (inst->GetShader100DebugOpcode() ==
+      if (inst->GetShaderDebugOpcode() ==
           NonSemanticShaderDebugInfo100DebugDeclare) {
         if (IsLive(inst)) return true;
 
@@ -309,8 +310,8 @@ Pass::Status AggressiveDCEPass::ProcessDebugInformation(
         // DebugDeclare Variable is not live. Find the value that was being
         // stored to this variable. If it's live then create a new DebugValue
         // with this value. Otherwise let it die in peace.
-        get_def_use_mgr()->ForEachUser(var_id, [this, var_id,
-                                                inst](Instruction* user) {
+        get_def_use_mgr()->ForEachUser(var_id, [this,
+                                                var_id](Instruction* user) {
           if (user->opcode() == spv::Op::OpStore) {
             uint32_t stored_value_id = 0;
             const uint32_t kStoreValueInIdx = 1;
@@ -320,18 +321,18 @@ Pass::Status AggressiveDCEPass::ProcessDebugInformation(
             }
 
             // value being stored is still live
-            Instruction* next_inst = inst->NextNode();
+            Instruction* next_inst = user->NextNode();
             bool added =
                 context()->get_debug_info_mgr()->AddDebugValueForVariable(
-                    user, var_id, stored_value_id, inst);
+                    user, var_id, stored_value_id, user);
             if (added && next_inst) {
               auto new_debug_value = next_inst->PreviousNode();
-              live_insts_.Set(new_debug_value->unique_id());
+              AddToWorklist(new_debug_value);
             }
           }
           return true;
         });
-      } else if (inst->GetShader100DebugOpcode() ==
+      } else if (inst->GetShaderDebugOpcode() ==
                  NonSemanticShaderDebugInfo100DebugValue) {
         uint32_t var_operand_idx = kDebugValueValueInIdx;
         uint32_t id = inst->GetSingleWordInOperand(var_operand_idx);
@@ -344,42 +345,13 @@ Pass::Status AggressiveDCEPass::ProcessDebugInformation(
 
         // Value operand of DebugValue is not live
         // Set Value to Undef of appropriate type
-        live_insts_.Set(inst->unique_id());
-
         uint32_t type_id = def->type_id();
-        auto type_def = get_def_use_mgr()->GetDef(type_id);
-        AddToWorklist(type_def);
-
         uint32_t undef_id = Type2Undef(type_id);
         if (undef_id == 0) return false;
 
-        auto undef_inst = get_def_use_mgr()->GetDef(undef_id);
-        live_insts_.Set(undef_inst->unique_id());
         inst->SetInOperand(var_operand_idx, {undef_id});
         context()->get_def_use_mgr()->AnalyzeInstUse(inst);
-
-        id = inst->GetSingleWordInOperand(kDebugValueLocalVariableInIdx);
-        auto localVar = get_def_use_mgr()->GetDef(id);
-        AddToWorklist(localVar);
-
-        uint32_t expr_idx = kDebugValueExpressionInIdx;
-        id = inst->GetSingleWordInOperand(expr_idx);
-        auto expression = get_def_use_mgr()->GetDef(id);
-        AddToWorklist(expression);
-
-        for (uint32_t i = expr_idx + 1; i < inst->NumInOperands(); ++i) {
-          id = inst->GetSingleWordInOperand(i);
-          auto index_def = get_def_use_mgr()->GetDef(id);
-          if (index_def) {
-            AddToWorklist(index_def);
-          }
-        }
-
-        for (auto& line_inst : inst->dbg_line_insts()) {
-          if (line_inst.IsDebugLineInst()) {
-            AddToWorklist(&line_inst);
-          }
-        }
+        AddToWorklist(inst);
       }
       return true;
     });
@@ -789,7 +761,7 @@ Pass::Status AggressiveDCEPass::InitializeModuleScopeLiveInstructions() {
 
   // Add DebugInfo which should never be eliminated to worklist
   for (auto& dbg : get_module()->ext_inst_debuginfo()) {
-    auto op = dbg.GetShader100DebugOpcode();
+    auto op = dbg.GetShaderDebugOpcode();
     if (op == NonSemanticShaderDebugInfo100DebugCompilationUnit ||
         op == NonSemanticShaderDebugInfo100DebugEntryPoint ||
         op == NonSemanticShaderDebugInfo100DebugSource ||
@@ -1045,7 +1017,7 @@ bool AggressiveDCEPass::ProcessGlobalValues() {
       continue;
     }
     // Save debug build identifier even if no other instructions refer to it.
-    if (dbg.GetShader100DebugOpcode() ==
+    if (dbg.GetShaderDebugOpcode() ==
         NonSemanticShaderDebugInfo100DebugBuildIdentifier) {
       // The debug build identifier refers to other instructions that
       // can potentially be removed, they also need to be kept alive.
@@ -1151,6 +1123,8 @@ void AggressiveDCEPass::InitExtensions() {
       "SPV_NV_shader_subgroup_partitioned",
       "SPV_EXT_demote_to_helper_invocation",
       "SPV_EXT_descriptor_indexing",
+      "SPV_EXT_descriptor_heap",
+      "SPV_KHR_untyped_pointers",
       "SPV_NV_fragment_shader_barycentric",
       "SPV_NV_compute_shader_derivatives",
       "SPV_NV_shader_image_footprint",
@@ -1165,13 +1139,13 @@ void AggressiveDCEPass::InitExtensions() {
       "SPV_KHR_physical_storage_buffer",
       "SPV_KHR_terminate_invocation",
       "SPV_KHR_shader_clock",
-      "SPV_KHR_vulkan_memory_model",
       "SPV_KHR_subgroup_uniform_control_flow",
       "SPV_KHR_integer_dot_product",
       "SPV_EXT_shader_image_int64",
       "SPV_KHR_non_semantic_info",
       "SPV_KHR_uniform_group_instructions",
       "SPV_KHR_fragment_shader_barycentric",
+      "SPV_KHR_vulkan_memory_model",
       "SPV_NV_bindless_texture",
       "SPV_EXT_shader_atomic_float_add",
       "SPV_EXT_fragment_shader_interlock",
@@ -1185,6 +1159,12 @@ void AggressiveDCEPass::InitExtensions() {
       "SPV_NV_cluster_acceleration_structure",
       "SPV_NV_linear_swept_spheres",
       "SPV_KHR_maximal_reconvergence",
+      "SPV_NV_push_constant_bank",
+      "SPV_EXT_opacity_micromap",
+      "SPV_EXT_shader_invocation_reorder",
+      "SPV_EXT_shader_atomic_float16_add",
+      "SPV_KHR_abort",
+      "SPV_KHR_constant_data",
   });
 }
 

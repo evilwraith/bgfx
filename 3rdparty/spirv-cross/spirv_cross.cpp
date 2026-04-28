@@ -411,11 +411,19 @@ SPIRVariable *Compiler::maybe_get_backing_variable(uint32_t chain)
 	{
 		auto *cexpr = maybe_get<SPIRExpression>(chain);
 		if (cexpr)
+		{
 			var = maybe_get<SPIRVariable>(cexpr->loaded_from);
+			if (!var && cexpr->loaded_from != chain)
+				var = maybe_get_backing_variable(cexpr->loaded_from);
+		}
 
 		auto *access_chain = maybe_get<SPIRAccessChain>(chain);
 		if (access_chain)
+		{
 			var = maybe_get<SPIRVariable>(access_chain->loaded_from);
+			if (!var && access_chain->loaded_from != chain)
+				var = maybe_get_backing_variable(access_chain->loaded_from);
+		}
 	}
 
 	return var;
@@ -3611,7 +3619,7 @@ bool Compiler::AnalyzeVariableScopeAccessHandler::handle(Op op, const uint32_t *
 
 	case OpCopyObject:
 	{
-		// OpCopyObject copies the underlying non-pointer type, 
+		// OpCopyObject copies the underlying non-pointer type,
 		// so any temp variable should be declared using the underlying type.
 		// If the type is a pointer, get its base type and overwrite the result type mapping.
 		auto &type = compiler.get<SPIRType>(result_type);
@@ -5078,12 +5086,12 @@ std::string Compiler::get_remapped_declared_block_name(uint32_t id, bool fallbac
 
 bool Compiler::reflection_ssbo_instance_name_is_significant() const
 {
-	if (ir.source.known)
+	if (!ir.sources.empty() && ir.sources[0].known)
 	{
 		// UAVs from HLSL source tend to be declared in a way where the type is reused
 		// but the instance name is significant, and that's the name we should report.
 		// For GLSL, SSBOs each have their own block type as that's how GLSL is written.
-		return ir.source.hlsl;
+		return ir.sources[0].hlsl;
 	}
 
 	unordered_set<uint32_t> ssbo_type_ids;
@@ -5804,4 +5812,3 @@ const SPIRType *Compiler::OpcodeHandler::get_expression_result_type(uint32_t id)
 
 	return &compiler.get<SPIRType>(itr->second);
 }
-
