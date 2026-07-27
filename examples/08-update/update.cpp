@@ -185,6 +185,15 @@ bgfx::TextureHandle loadTextureWithUpdate(const char* _filePath, uint64_t _flags
 					width  = bx::max(blockWidth,  width);
 					height = bx::max(blockHeight, height);
 
+					// Compute source row pitch and pass it to updateTexture2D to
+					// exercise the explicit-pitch upload path.
+					const uint32_t numBlocksX = (width + blockWidth - 1) / blockWidth;
+
+					const uint32_t srcPitch = bimg::isCompressed(imageContainer->m_format)
+						? numBlocksX * blockInfo.blockSize
+						: width * blockInfo.bitsPerPixel / 8
+						;
+
 					bimg::ImageMip mip;
 
 					if (bimg::imageGetRawData(*imageContainer, 0, lod, imageContainer->m_data, imageContainer->m_size, mip))
@@ -201,6 +210,7 @@ bgfx::TextureHandle loadTextureWithUpdate(const char* _filePath, uint64_t _flags
 							, uint16_t(width)
 							, uint16_t(height)
 							, bgfx::copy(mipData, mipDataSize)
+							, uint16_t(srcPitch)
 							);
 					}
 
@@ -222,6 +232,7 @@ bgfx::TextureHandle loadTextureWithUpdate(const char* _filePath, uint64_t _flags
 }
 
 static const uint16_t kTextureSide   = 512;
+static const uint32_t kClearCubeAfterAllocations = 1024;
 static const uint32_t kTexture2dSize = 256;
 
 class ExampleUpdate : public entry::AppI
@@ -461,6 +472,7 @@ public:
 
 		m_hit  = 0;
 		m_miss = 0;
+		m_lastClearHit = 0;
 
 		imguiCreate();
 
@@ -619,6 +631,15 @@ public:
 
 			if (bx::getNow() > m_updateTime)
 			{
+				if (m_hit - m_lastClearHit >= kClearCubeAfterAllocations)
+				{
+					bgfx::clear(m_textureCube[0]);
+					bgfx::clear(m_textureCube[1]);
+					m_cube.reset(kTextureSide);
+					m_quads.clear();
+					m_lastClearHit = m_hit;
+				}
+
 				PackCube face;
 
 				uint16_t bw = bx::max<uint16_t>(1, m_rng.gen()%(kTextureSide/4) );
@@ -659,7 +680,7 @@ public:
 				{
 					++m_miss;
 
-					for (uint32_t ii = 0, num = bx::uint32_min(10, (uint32_t)m_quads.size() ); ii < num; ++ii)
+					for (uint32_t ii = 0, num = bx::min(10, (uint32_t)m_quads.size() ); ii < num; ++ii)
 					{
 						face = m_quads.front();
 						const Pack2D& rect = face.m_rect;
@@ -1072,6 +1093,7 @@ public:
 
 	uint32_t m_hit;
 	uint32_t m_miss;
+	uint32_t m_lastClearHit;
 
 	uint8_t m_rr;
 	uint8_t m_gg;
