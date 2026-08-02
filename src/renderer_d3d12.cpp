@@ -210,8 +210,11 @@ namespace bgfx { namespace d3d12
 		{ DXGI_FORMAT_BC2_UNORM,          DXGI_FORMAT_BC2_UNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_BC2_UNORM_SRGB,       D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC2
 		{ DXGI_FORMAT_BC3_UNORM,          DXGI_FORMAT_BC3_UNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_BC3_UNORM_SRGB,       D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC3
 		{ DXGI_FORMAT_BC4_UNORM,          DXGI_FORMAT_BC4_UNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC4
+		{ DXGI_FORMAT_BC4_SNORM,          DXGI_FORMAT_BC4_SNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC4S
 		{ DXGI_FORMAT_BC5_UNORM,          DXGI_FORMAT_BC5_UNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC5
+		{ DXGI_FORMAT_BC5_SNORM,          DXGI_FORMAT_BC5_SNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC5S
 		{ DXGI_FORMAT_BC6H_SF16,          DXGI_FORMAT_BC6H_SF16,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC6H
+		{ DXGI_FORMAT_BC6H_UF16,          DXGI_FORMAT_BC6H_UF16,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC6HU
 		{ DXGI_FORMAT_BC7_UNORM,          DXGI_FORMAT_BC7_UNORM,             DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_BC7_UNORM_SRGB,       D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BC7
 		{ DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN,               DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // ETC1
 		{ DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN,               DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // ETC2
@@ -296,6 +299,7 @@ namespace bgfx { namespace d3d12
 		{ DXGI_FORMAT_B5G5R5A1_UNORM,     DXGI_FORMAT_B5G5R5A1_UNORM,        DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // BGR5A1
 		{ DXGI_FORMAT_B5G5R5A1_UNORM,     DXGI_FORMAT_B5G5R5A1_UNORM,        DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING($B, $G, $R, $A) }, // RGB5A1
 		{ DXGI_FORMAT_R10G10B10A2_UNORM,  DXGI_FORMAT_R10G10B10A2_UNORM,     DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // RGB10A2
+		{ DXGI_FORMAT_R10G10B10A2_UINT,   DXGI_FORMAT_R10G10B10A2_UINT,      DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // RGB10A2U
 		{ DXGI_FORMAT_R11G11B10_FLOAT,    DXGI_FORMAT_R11G11B10_FLOAT,       DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // RG11B10F
 		{ DXGI_FORMAT_UNKNOWN,            DXGI_FORMAT_UNKNOWN,               DXGI_FORMAT_UNKNOWN,           DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // UnknownDepth
 		{ DXGI_FORMAT_R16_TYPELESS,       DXGI_FORMAT_R16_UNORM,             DXGI_FORMAT_D16_UNORM,         DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // D16
@@ -305,6 +309,7 @@ namespace bgfx { namespace d3d12
 		{ DXGI_FORMAT_R32_TYPELESS,       DXGI_FORMAT_R32_FLOAT,             DXGI_FORMAT_D32_FLOAT,         DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // D16F
 		{ DXGI_FORMAT_R32_TYPELESS,       DXGI_FORMAT_R32_FLOAT,             DXGI_FORMAT_D32_FLOAT,         DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // D24F
 		{ DXGI_FORMAT_R32_TYPELESS,       DXGI_FORMAT_R32_FLOAT,             DXGI_FORMAT_D32_FLOAT,         DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // D32F
+		{ DXGI_FORMAT_R32G8X24_TYPELESS,  DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS, DXGI_FORMAT_D32_FLOAT_S8X24_UINT, DXGI_FORMAT_UNKNOWN,        D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // D32FS8
 		{ DXGI_FORMAT_R24G8_TYPELESS,     DXGI_FORMAT_R24_UNORM_X8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT, DXGI_FORMAT_UNKNOWN,              D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING                }, // D0S8
 #undef $0
 #undef $1
@@ -314,6 +319,22 @@ namespace bgfx { namespace d3d12
 #undef $A
 	};
 	static_assert(TextureFormat::Count == BX_COUNTOF(s_textureFormat) );
+
+	static DXGI_FORMAT getBackBufferFormat(const Resolution& _resolution)
+	{
+		return 0 != (_resolution.reset & BGFX_RESET_SRGB_BACKBUFFER)
+			? s_textureFormat[_resolution.formatColor].m_fmtSrgb
+			: s_textureFormat[_resolution.formatColor].m_fmt
+			;
+	}
+
+	static DXGI_FORMAT getBackBufferDepthStencilFormat(const Resolution& _resolution)
+	{
+		return bimg::isDepth(bimg::TextureFormat::Enum(_resolution.formatDepthStencil) )
+			? s_textureFormat[_resolution.formatDepthStencil].m_fmtDsv
+			: DXGI_FORMAT_UNKNOWN
+			;
+	}
 
 	static const D3D12_INPUT_ELEMENT_DESC s_attrib[] =
 	{
@@ -1463,7 +1484,6 @@ namespace bgfx { namespace d3d12
 						D3D12_MESSAGE_CATEGORY catlist[] =
 						{
 							D3D12_MESSAGE_CATEGORY_STATE_CREATION,
-							D3D12_MESSAGE_CATEGORY_EXECUTION,
 						};
 						filter.DenyList.NumCategories = BX_COUNTOF(catlist);
 						filter.DenyList.pCategoryList = catlist;
@@ -2822,10 +2842,7 @@ namespace bgfx { namespace d3d12
 						) );
 
 					D3D12_RENDER_TARGET_VIEW_DESC rtvDesc;
-					rtvDesc.Format = (m_resolution.reset & BGFX_RESET_SRGB_BACKBUFFER)
-						? s_textureFormat[m_resolution.formatColor].m_fmtSrgb
-						: s_textureFormat[m_resolution.formatColor].m_fmt
-						;
+					rtvDesc.Format = getBackBufferFormat(m_resolution);
 
 					if (1 < getResourceDesc(m_backBufferColor[ii]).DepthOrArraySize)
 					{
@@ -3002,7 +3019,6 @@ namespace bgfx { namespace d3d12
 			|| (m_resolution.reset&maskFlags)   != (_resolution.reset&maskFlags) )
 			{
 				uint32_t flags = _resolution.reset & (~BGFX_RESET_INTERNAL_FORCE);
-
 				bool resize = true
 					&& BX_ENABLED(BX_PLATFORM_WINDOWS || BX_PLATFORM_WINRT)
 					&& (m_resolution.reset&BGFX_RESET_MSAA_MASK) == (_resolution.reset&BGFX_RESET_MSAA_MASK)
@@ -3662,6 +3678,15 @@ namespace bgfx { namespace d3d12
 
 			murmur.add(layout.m_attributes, sizeof(layout.m_attributes) );
 			murmur.add(m_fbh.idx);
+
+			murmur.add(m_scd.sampleDesc);
+
+			if (!isValid(m_fbh) )
+			{
+				murmur.add(getBackBufferFormat(m_resolution) );
+				murmur.add(getBackBufferDepthStencilFormat(m_resolution) );
+			}
+
 			murmur.add(_numInstanceData);
 			const uint32_t hash = murmur.end();
 
@@ -3748,15 +3773,15 @@ namespace bgfx { namespace d3d12
 				else
 				{
 					desc.NumRenderTargets = 1;
-					desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+					desc.RTVFormats[0] = frameBuffer.m_swapChainFormat;
 					desc.DSVFormat     = DXGI_FORMAT_UNKNOWN;
 				}
 			}
 			else
 			{
 				desc.NumRenderTargets = 1;
-				desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-				desc.DSVFormat     = DXGI_FORMAT_D24_UNORM_S8_UINT;
+				desc.RTVFormats[0] = getBackBufferFormat(m_resolution);
+				desc.DSVFormat     = getBackBufferDepthStencilFormat(m_resolution);
 			}
 
 			desc.SampleDesc = m_scd.sampleDesc;
@@ -5197,7 +5222,9 @@ namespace bgfx { namespace d3d12
 				, vbvs
 				);
 
-			const VertexBufferD3D12& indirect = s_renderD3D12->m_vertexBuffers[_draw.m_indirectBuffer.idx];
+			VertexBufferD3D12& indirect = s_renderD3D12->m_vertexBuffers[_draw.m_indirectBuffer.idx];
+			indirect.setState(_commandList, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+
 			const uint32_t numDrawIndirect = UINT32_MAX == _draw.m_numIndirect
 				? indirect.m_size/BGFX_CONFIG_DRAW_INDIRECT_STRIDE
 				: _draw.m_numIndirect
@@ -5206,7 +5233,10 @@ namespace bgfx { namespace d3d12
 			uint32_t numOffsetIndirect = 0;
 			if (isValid(_draw.m_numIndirectBuffer) )
 			{
-				numIndirect = s_renderD3D12->m_indexBuffers[_draw.m_numIndirectBuffer.idx].m_ptr;
+				BufferD3D12& numIndirectBuffer = s_renderD3D12->m_indexBuffers[_draw.m_numIndirectBuffer.idx];
+				numIndirectBuffer.setState(_commandList, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
+
+				numIndirect = numIndirectBuffer.m_ptr;
 				numOffsetIndirect = _draw.m_numIndirectIndex * sizeof(uint32_t);
 			}
 
@@ -5659,7 +5689,7 @@ namespace bgfx { namespace d3d12
 			: D3D12_RESOURCE_STATE_GENERIC_READ
 			);
 
-		if (!m_dynamic)
+		if (NULL != _data)
 		{
 			update(commandList, 0, _size, _data);
 		}
@@ -6069,8 +6099,9 @@ namespace bgfx { namespace d3d12
 
 			const bool compressed = bimg::isCompressed(bimg::TextureFormat::Enum(m_textureFormat) );
 			const bool isVideoDecodeDst = 0 != (m_flags & BGFX_TEXTURE_INTERNAL_VIDEO_DECODE_DST);
-			const bool swizzle    = TextureFormat::BGRA8 == m_textureFormat
-				&& (0 != (m_flags&BGFX_TEXTURE_COMPUTE_WRITE) || isVideoDecodeDst)
+			const bool swizzle = TextureFormat::BGRA8 == m_textureFormat
+				&& ( (0 != (m_flags&BGFX_TEXTURE_COMPUTE_WRITE) && 0 == (g_caps.formats[TextureFormat::BGRA8] & BGFX_CAPS_FORMAT_TEXTURE_IMAGE_WRITE) )
+				  || isVideoDecodeDst)
 				;
 
 			const bool writeOnly      = 0 != (m_flags & BGFX_TEXTURE_RT_WRITE_ONLY);
@@ -6790,7 +6821,7 @@ namespace bgfx { namespace d3d12
 			bx::free(g_allocator, temp);
 		}
 
-		D3D12_RANGE writeRange = { 0, numSlices*dstSlicePitch };
+		D3D12_RANGE writeRange = { 0, size_t(totalBytes) };
 		staging->Unmap(0, &writeRange);
 
 		D3D12_TEXTURE_COPY_LOCATION dst = { m_ptr,   D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX, {        } };
@@ -7049,6 +7080,8 @@ namespace bgfx { namespace d3d12
 		BGFX_FATAL(SUCCEEDED(hr), Fatal::UnableToInitialize, "Failed to create swap chain.");
 		m_state = D3D12_RESOURCE_STATE_PRESENT;
 
+		m_swapChainFormat = scd.format;
+
 		DX_CHECK(s_renderD3D12->m_dxgi.m_factory->MakeWindowAssociation(
 			  (HWND)_nwh
 			, 0
@@ -7082,6 +7115,7 @@ namespace bgfx { namespace d3d12
 	{
 		DX_RELEASE(m_swapChain, 0);
 
+		m_swapChainFormat = DXGI_FORMAT_UNKNOWN;
 		m_nwh   = NULL;
 		m_numTh = 0;
 		m_num   = 0;
@@ -7138,8 +7172,8 @@ namespace bgfx { namespace d3d12
 					if (0 == m_width)
 					{
 						D3D12_RESOURCE_DESC desc = getResourceDesc(texture.m_ptr);
-						m_width  = uint32_t(desc.Width);
-						m_height = uint32_t(desc.Height);
+						m_width  = bx::max<uint32_t>(1, uint32_t(desc.Width)  >> at.mip);
+						m_height = bx::max<uint32_t>(1, uint32_t(desc.Height) >> at.mip);
 					}
 
 					const uint32_t msaaQuality = bx::satSub<uint32_t>(uint32_t( (texture.m_flags & BGFX_TEXTURE_RT_MSAA_MASK) >> BGFX_TEXTURE_RT_MSAA_SHIFT ), 1u);
@@ -7644,18 +7678,34 @@ namespace bgfx { namespace d3d12
 	void RendererContextD3D12::submitBlit(BlitState& _bs, uint16_t _view)
 	{
 		TextureHandle currentSrc = { kInvalidHandle };
-		D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATES(UINT32_MAX);
+		TextureHandle currentDst = { kInvalidHandle };
+
+		D3D12_RESOURCE_STATES srcState = D3D12_RESOURCE_STATES(UINT32_MAX);
+		D3D12_RESOURCE_STATES dstState = D3D12_RESOURCE_STATES(UINT32_MAX);
 
 		while (_bs.hasItem(_view) )
 		{
 			const BlitItem& blit = _bs.advance();
 
-			      TextureD3D12& src = m_textures[blit.m_src.idx];
-			const TextureD3D12& dst = m_textures[blit.m_dst.idx];
+			TextureD3D12& src = m_textures[blit.m_src.idx];
+			TextureD3D12& dst = m_textures[blit.m_dst.idx];
+
+			const uint16_t dstIdx = blit.m_src.idx != blit.m_dst.idx
+				? blit.m_dst.idx
+				: kInvalidHandle
+				;
+
+			if (currentDst.idx == blit.m_src.idx)
+			{
+				m_textures[currentDst.idx].setState(m_commandList, dstState);
+
+				currentDst.idx = kInvalidHandle;
+				dstState = D3D12_RESOURCE_STATES(UINT32_MAX);
+			}
 
 			if (currentSrc.idx != blit.m_src.idx)
 			{
-				if (D3D12_RESOURCE_STATES(UINT32_MAX) != state)
+				if (D3D12_RESOURCE_STATES(UINT32_MAX) != srcState)
 				{
 					TextureD3D12& prev = m_textures[currentSrc.idx];
 
@@ -7668,7 +7718,7 @@ namespace bgfx { namespace d3d12
 							);
 					}
 
-					prev.setState(m_commandList, state);
+					prev.setState(m_commandList, srcState);
 				}
 
 				currentSrc = blit.m_src.to<TextureHandle>();
@@ -7682,7 +7732,23 @@ namespace bgfx { namespace d3d12
 					);
 				}
 
-				state = src.setState(m_commandList, D3D12_RESOURCE_STATE_COPY_SOURCE);
+				srcState = src.setState(m_commandList, D3D12_RESOURCE_STATE_COPY_SOURCE);
+			}
+
+			if (currentDst.idx != dstIdx)
+			{
+				if (D3D12_RESOURCE_STATES(UINT32_MAX) != dstState)
+				{
+					m_textures[currentDst.idx].setState(m_commandList, dstState);
+					dstState = D3D12_RESOURCE_STATES(UINT32_MAX);
+				}
+
+				currentDst.idx = dstIdx;
+
+				if (kInvalidHandle != dstIdx)
+				{
+					dstState = dst.setState(m_commandList, D3D12_RESOURCE_STATE_COPY_DEST);
+				}
 			}
 
 			if (TextureD3D12::Texture3D == src.m_type)
@@ -7755,8 +7821,14 @@ namespace bgfx { namespace d3d12
 			}
 		}
 
+		if (isValid(currentDst)
+		&&  D3D12_RESOURCE_STATES(UINT32_MAX) != dstState)
+		{
+			m_textures[currentDst.idx].setState(m_commandList, dstState);
+		}
+
 		if (isValid(currentSrc)
-		&&  D3D12_RESOURCE_STATES(UINT32_MAX) != state)
+		&&  D3D12_RESOURCE_STATES(UINT32_MAX) != srcState)
 		{
 			TextureD3D12& src = m_textures[currentSrc.idx];
 
@@ -7769,7 +7841,7 @@ namespace bgfx { namespace d3d12
 					);
 			}
 
-			src.setState(m_commandList, state);
+			src.setState(m_commandList, srcState);
 		}
 	}
 
@@ -8247,7 +8319,8 @@ namespace bgfx { namespace d3d12
 
 					if (isValid(compute.m_indirectBuffer) )
 					{
-						const VertexBufferD3D12& indirect = m_vertexBuffers[compute.m_indirectBuffer.idx];
+						VertexBufferD3D12& indirect = m_vertexBuffers[compute.m_indirectBuffer.idx];
+						indirect.setState(m_commandList, D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT);
 
 						uint32_t numDrawIndirect = UINT32_MAX == compute.m_numIndirect
 							? indirect.m_size/BGFX_CONFIG_DRAW_INDIRECT_STRIDE
