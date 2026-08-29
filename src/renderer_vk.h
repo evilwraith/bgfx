@@ -114,6 +114,8 @@
 			/* VK_EXT_debug_report */                                                  \
 			VK_IMPORT_INSTANCE_FUNC(true,  vkCreateDebugReportCallbackEXT);            \
 			VK_IMPORT_INSTANCE_FUNC(true,  vkDestroyDebugReportCallbackEXT);           \
+			/* VK_KHR_present_wait */                                                  \
+			VK_IMPORT_INSTANCE_FUNC(true, vkWaitForPresentKHR);                        \
 			/* VK_KHR_fragment_shading_rate */                                         \
 			VK_IMPORT_INSTANCE_FUNC(true, vkGetPhysicalDeviceFragmentShadingRatesKHR); \
 			/* VK_KHR_video_queue */                                                   \
@@ -189,6 +191,7 @@
 			VK_IMPORT_DEVICE_FUNC(false, vkCmdDispatchIndirect);                      \
 			VK_IMPORT_DEVICE_FUNC(false, vkCmdBindPipeline);                          \
 			VK_IMPORT_DEVICE_FUNC(false, vkCmdSetStencilReference);                   \
+			VK_IMPORT_DEVICE_FUNC(false, vkCmdSetStencilCompareMask);                 \
 			VK_IMPORT_DEVICE_FUNC(false, vkCmdSetStencilWriteMask);                   \
 			VK_IMPORT_DEVICE_FUNC(false, vkCmdSetBlendConstants);                     \
 			VK_IMPORT_DEVICE_FUNC(false, vkCmdSetScissor);                            \
@@ -395,9 +398,9 @@ VK_DESTROY_FUNC(DescriptorSet);
 		{
 		}
 
-		static constexpr uint16_t MAX_ENTRIES = 1 << 10;
-		DeviceMemoryAllocationVK entries[MAX_ENTRIES];
-		bx::HandleAllocLruT<MAX_ENTRIES> lru;
+		static constexpr uint16_t kMaxEntries = 1 << 10;
+		DeviceMemoryAllocationVK entries[kMaxEntries];
+		bx::HandleAllocLruT<kMaxEntries> lru;
 		uint64_t totalSizeCached;
 
 		void recycle(DeviceMemoryAllocationVK &_alloc);
@@ -405,10 +408,6 @@ VK_DESTROY_FUNC(DescriptorSet);
 		void evictAll();
 	};
 
-	/** A Buffer used for moving data from main memory to GPU memory.
-	 * This can either be an independently allocated memory region, or a sub-region
-	 * of the scratch staging buffer for the frame-in-flight.
-	 */
 	struct StagingBufferVK
 	{
 		VkBuffer m_buffer;
@@ -416,7 +415,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 
 		uint8_t* m_data;
 		uint32_t m_size;
-		uint32_t m_offset; // Offset into the bound buffer (not the device memory!)
+		uint32_t m_offset;
 		bool     m_isFromScratch;
 	};
 
@@ -685,8 +684,9 @@ VK_DESTROY_FUNC(DescriptorSet);
 		void create(VkImage _image, uint32_t _width, uint32_t _height, TextureFormat::Enum _format);
 		void destroy();
 		uint32_t pitch(uint8_t _mip = 0) const;
+		uint32_t stagingSize(VkImageAspectFlags _aspect, uint8_t _mip = 0) const;
 		void copyImageToBuffer(VkCommandBuffer _commandBuffer, VkBuffer _buffer, VkImageLayout _layout, VkImageAspectFlags _aspect, uint16_t _layer = 0, uint8_t _mip = 0) const;
-		void readback(VkDeviceMemory _memory, VkDeviceSize _offset, void* _data, uint8_t _mip = 0) const;
+		void readback(VkDeviceMemory _memory, VkDeviceSize _offset, void* _data, VkImageAspectFlags _aspect, uint8_t _mip = 0) const;
 
 		VkImage  m_image;
 		uint32_t m_width;
@@ -774,6 +774,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 			, m_swapChain(VK_NULL_HANDLE)
 			, m_lastImageRenderedSemaphore(VK_NULL_HANDLE)
 			, m_lastImageAcquiredSemaphore(VK_NULL_HANDLE)
+			, m_needPresent(false)
 			, m_backBufferDepthStencilImageView(VK_NULL_HANDLE)
 			, m_backBufferColorMsaaImageView(VK_NULL_HANDLE)
 		{
@@ -799,6 +800,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 		TextureFormat::Enum findSurfaceFormat(TextureFormat::Enum _format, VkColorSpaceKHR _colorSpace, bool _srgb);
 
 		bool acquire(VkCommandBuffer _commandBuffer, bool _block = true);
+		bool waitForSwapchain();
 		void present();
 
 		void transitionImage(VkCommandBuffer _commandBuffer);
@@ -834,6 +836,8 @@ VK_DESTROY_FUNC(DescriptorSet);
 		VkSemaphore m_lastImageRenderedSemaphore;
 		VkSemaphore m_lastImageAcquiredSemaphore;
 
+		uint64_t m_lastPresentId = 0;
+
 		bool m_needPresent;
 		bool m_needToRecreateSwapchain;
 		bool m_needToRecreateSurface;
@@ -861,6 +865,7 @@ VK_DESTROY_FUNC(DescriptorSet);
 			, m_nwh(NULL)
 			, m_needPresent(false)
 			, m_framebuffer(VK_NULL_HANDLE)
+			, m_currentFramebuffer(VK_NULL_HANDLE)
 		{
 		}
 

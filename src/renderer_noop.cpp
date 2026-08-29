@@ -97,6 +97,11 @@ namespace bgfx { namespace noop
 			return false;
 		}
 
+		bool waitForSwapchain() override
+		{
+			return false;
+		}
+
 		void flip() override
 		{
 		}
@@ -179,6 +184,10 @@ namespace bgfx { namespace noop
 		}
 
 		void readTexture(TextureHandle /*_handle*/, void* /*_data*/, uint16_t /*_layer*/, uint8_t /*_mip*/) override
+		{
+		}
+
+		void readBuffer(Handle /*_handle*/, void* /*_data*/, uint32_t /*_offset*/, uint32_t /*_size*/) override
 		{
 		}
 

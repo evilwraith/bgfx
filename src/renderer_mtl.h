@@ -428,11 +428,6 @@ namespace bgfx { namespace mtl
 			, m_depth(0)
 			, m_numMips(0)
 		{
-			for (uint32_t ii = 0; ii < BX_COUNTOF(m_ptrMips); ++ii)
-			{
-				m_ptrMips[ii]      = NULL;
-				m_ptrMipsArray[ii] = NULL;
-			}
 		}
 
 		void create(const Memory* _mem, uint64_t _flags, uint8_t _skip, uint64_t _external);
@@ -463,14 +458,12 @@ namespace bgfx { namespace mtl
 			, uint8_t _numMips = UINT8_MAX
 			);
 
-		MTL::Texture* getTextureMipLevel(uint8_t _mip, bool _array = false);
-		MTL::Texture* getTextureView(uint16_t _firstLayer, uint16_t _numLayers, uint8_t _firstMip, uint8_t _numMips);
+		MTL::Texture* getTextureImage(uint8_t _mip, uint16_t _firstLayer = 0, uint16_t _numLayers = UINT16_MAX);
+		MTL::Texture* getTextureView(uint16_t _firstLayer, uint16_t _numLayers, uint8_t _firstMip, uint8_t _numMips, bool _stencil = false);
 
 		MTL::Texture* m_ptr;
 		MTL::Texture* m_ptrMsaa;
 		MTL::Texture* m_ptrStencil; // for emulating packed depth/stencil formats - only for iOS8...
-		MTL::Texture* m_ptrMips[14];
-		MTL::Texture* m_ptrMipsArray[14];
 		stl::unordered_map<uint64_t, MTL::Texture*> m_ptrViews;
 		MTL::SamplerState* m_sampler;
 		VideoDecoderMtl*   m_videoDecoder;
@@ -594,6 +587,7 @@ namespace bgfx { namespace mtl
 		void release(T* _ptr) { release( (NS::Object*)(const void*)_ptr ); }
 
 		void consume();
+		bool waitForSwapchain();
 
 		bx::Semaphore m_framesSemaphore;
 
@@ -610,7 +604,9 @@ namespace bgfx { namespace mtl
 	struct TimerQueryMtl
 	{
 		TimerQueryMtl()
-			: m_control(4)
+			: m_frameNum(0)
+			, m_control(4)
+			, m_samplingIdx(0)
 		{
 		}
 
@@ -618,8 +614,17 @@ namespace bgfx { namespace mtl
 		void shutdown();
 		uint32_t begin(uint32_t _resultIdx, uint32_t _frameNum);
 		void end(uint32_t _idx);
-		void addHandlers(MTL::CommandBuffer*& _commandBuffer);
+		void addHandlers(MTL::CommandBuffer*& _commandBuffer, uint32_t _frameNum);
 		bool get();
+
+		bool isViewTimingSupported() const
+		{
+			return NULL != m_sampling[0].m_sampleBuffer;
+		}
+
+		void beginFrame(uint32_t _frameNum);
+		void attach(MTL::RenderPassDescriptor* _renderPassDescriptor);
+		void resolve(uint32_t _samplingIdx);
 
 		struct Result
 		{
@@ -637,13 +642,37 @@ namespace bgfx { namespace mtl
 			uint32_t m_frameNum;
 		};
 
+		struct Query
+		{
+			uint32_t m_resultIdx;
+			uint32_t m_frameNum;
+			uint32_t m_first;
+			uint32_t m_num;
+		};
+
+		struct Sampling
+		{
+			MTL::CounterSampleBuffer* m_sampleBuffer;
+			Query    m_query[BGFX_CONFIG_MAX_VIEWS];
+			uint32_t m_numQueries;
+			uint32_t m_numSamples;
+			uint32_t m_activeQuery;
+			uint64_t m_cpuTimestamp;
+			uint64_t m_gpuTimestamp;
+		};
+
 		uint64_t m_begin;
 		uint64_t m_end;
 		uint64_t m_elapsed;
 		uint64_t m_frequency;
+		uint32_t m_frameNum;
 
 		Result m_result[BGFX_CONFIG_MAX_VIEWS+1];
+		Result m_frameResult[4];
 		bx::RingBufferControl m_control;
+
+		Sampling m_sampling[BGFX_CONFIG_MAX_FRAME_LATENCY];
+		uint32_t m_samplingIdx;
 	};
 
 	struct OcclusionQueryMTL
