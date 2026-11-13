@@ -3309,6 +3309,8 @@ namespace bgfx { namespace gl
 
 		void flip() override
 		{
+			bool presented = false;
+
 			if (m_flip)
 			{
 				uint32_t lastPresent = 0;
@@ -3337,6 +3339,7 @@ namespace bgfx { namespace gl
 
 						m_glctx.swap(frameBuffer.m_swapChain, lastPresent == ii);
 						frameBuffer.m_needPresent = false;
+						presented = true;
 					}
 				}
 
@@ -3349,6 +3352,7 @@ namespace bgfx { namespace gl
 
 					m_glctx.swap();
 					m_needPresent = false;
+					presented = true;
 				}
 			}
 
@@ -3357,10 +3361,16 @@ namespace bgfx { namespace gl
 				return;
 			}
 
-			if (m_timerQuerySupport
+			// A frame that swapped nothing leaves its timer queries unflushed, and their results would
+			// never arrive. A flush is enough for that. glFinish here ran on EVERY frame, swapped or not
+			// (m_needPresent is false after a swap too), and waits for the GPU to complete the frame
+			// just issued: on a tile-based GPU (Mali-G610, GLES 3.2) that serialised the render thread
+			// with the GPU, 13-18 ms a frame, and held a 60 Hz application at 46 fps.
+			if (!presented
+			&&  m_timerQuerySupport
 			&&  m_gpuTimer.hasPending() )
 			{
-				GL_CHECK(glFinish() );
+				GL_CHECK(glFlush() );
 			}
 		}
 
