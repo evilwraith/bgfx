@@ -1196,6 +1196,21 @@ WL_EGL_IMPORT
 		bx::deleteObject(g_allocator, _swapChain);
 	}
 
+	// FORK PATCH (4kp): let the embedder present the PRIMARY surface itself.
+	//
+	// When the embedder owns presentation -- VPX renders into its own scanout buffers and commits
+	// them through KMS with an IN_FENCE_FD -- the primary eglSwapBuffers is pure cost. Only the
+	// primary is skipped: window swap chains that bgfx rendered into this frame still present
+	// normally, so a window the embedder has NOT taken over keeps working, and (measured on
+	// RK3588) swapchains that go permanently stale are suspected of flipping libmali into a slow
+	// encode mode. A window the embedder HAS taken over receives no views, so its swap chain is
+	// never presented by bgfx regardless of this flag.
+	//
+	// This is the bgfx-side counterpart of SDL_KMSDRM_SKIP_EGL_SURFACE, which already stops SDL
+	// owning presentation. Runtime rather than compile time, so the first frames (before the
+	// embedder's buffers exist) and any fallback still present normally.
+	bool s_skipPresent = false;
+
 	void GlContext::swap(SwapChainGL* _swapChain, bool _vsync)
 	{
 		makeCurrent(_swapChain);
@@ -1203,7 +1218,8 @@ WL_EGL_IMPORT
 		if (NULL == _swapChain)
 		{
 			if (NULL != m_display
-			&&  EGL_NO_SURFACE != m_surface)
+			&&  EGL_NO_SURFACE != m_surface
+			&&  !s_skipPresent)
 			{
 				EGL_CHECK(eglSwapBuffers(m_display, m_surface) );
 			}
@@ -1319,6 +1335,13 @@ WL_EGL_IMPORT
 	}
 
 } /* namespace gl */ } // namespace bgfx
+
+// FORK PATCH (4kp): see s_skipPresent above. C linkage so the embedder can flip it without
+// linking against bgfx internals.
+extern "C" void bgfx_set_skip_present(bool _skip)
+{
+	bgfx::gl::s_skipPresent = _skip;
+}
 
 #	endif // BGFX_USE_EGL
 #endif // (BGFX_CONFIG_RENDERER_OPENGLES || BGFX_CONFIG_RENDERER_OPENGL)
