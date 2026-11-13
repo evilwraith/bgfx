@@ -614,7 +614,42 @@ WL_EGL_IMPORT
 					, BX_COUNTOF(attrs)
 					);
 
-				success = eglChooseConfig(m_display, attrs, &m_config, 1, &numConfigs);
+				/* VPINBALL/4kp: eglChooseConfig sorts deeper configs first, and the Mali blob's first
+				   match for "8 bits or more" is a 10/10/10/2 config whose buffers come out as AB30,
+				   which the RK3588 VOP2 Esmart planes refuse (seen as every frame dropped under the
+				   cabinet compositor). Take the first config with EXACTLY the requested colour
+				   sizes; fall back to bgfx's choice when none matches. */
+				{
+					EGLConfig exact[64];
+					EGLint numExact = 0;
+					success = eglChooseConfig(m_display, attrs, exact, BX_COUNTOF(exact), &numExact);
+					numConfigs = 0;
+					if (success)
+					{
+						for (EGLint ii = 0; ii < numExact; ++ii)
+						{
+							EGLint rr = 0, gg = 0, bb = 0, aa = 0;
+							eglGetConfigAttrib(m_display, exact[ii], EGL_RED_SIZE,   &rr);
+							eglGetConfigAttrib(m_display, exact[ii], EGL_GREEN_SIZE, &gg);
+							eglGetConfigAttrib(m_display, exact[ii], EGL_BLUE_SIZE,  &bb);
+							eglGetConfigAttrib(m_display, exact[ii], EGL_ALPHA_SIZE, &aa);
+							if (rr == (EGLint)colorBlockInfo.rBits
+							&&  gg == (EGLint)colorBlockInfo.gBits
+							&&  bb == (EGLint)colorBlockInfo.bBits
+							&&  aa == (EGLint)colorBlockInfo.aBits)
+							{
+								m_config = exact[ii];
+								numConfigs = 1;
+								break;
+							}
+						}
+						if (0 == numConfigs && numExact > 0)
+						{
+							m_config = exact[0];
+							numConfigs = 1;
+						}
+					}
+				}
 
 				if (!success
 				||  0 == numConfigs)
