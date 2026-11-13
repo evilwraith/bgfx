@@ -172,6 +172,28 @@ WL_EGL_IMPORT
 
 	static EGLSurface createWindowSurface(EGLDisplay _display, EGLConfig _config, EGLNativeWindowType _nwh, bool _colorspaceSupport, bool _srgb)
 	{
+		/* VPINBALL/4kp: a gbm_surface is not an EGLNativeWindowType the legacy entry point
+		   understands; use eglCreatePlatformWindowSurfaceEXT when present, falling back to
+		   the legacy call. In this helper so both the initial surface and the one recreated on
+		   reset take it. Ported from evilwraith/bgfx@03f25e9 (branch 4kp_fixes). */
+#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+		const char* useGbmSurfEnv = getenv("BGFX_USE_GBM");
+		if (NULL != useGbmSurfEnv && '1' == useGbmSurfEnv[0])
+		{
+			typedef EGLSurface (*PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC_LOCAL)(EGLDisplay, EGLConfig, void*, const EGLint*);
+			PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC_LOCAL createPlatformWindowSurfaceEXT =
+				(PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC_LOCAL)eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
+			if (NULL != createPlatformWindowSurfaceEXT)
+			{
+				EGLSurface surface = createPlatformWindowSurfaceEXT(_display, _config, (void*)_nwh, NULL);
+				if (EGL_NO_SURFACE != surface)
+				{
+					return surface;
+				}
+			}
+		}
+#	endif // BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+
 		if (_colorspaceSupport
 		&&  _srgb)
 		{
@@ -342,7 +364,34 @@ WL_EGL_IMPORT
 			}
 #	endif // BX_PLATFORM_WINDOWS
 
-			m_display = eglGetDisplay(NULL == ndt ? EGL_DEFAULT_DISPLAY : ndt);
+			/* VPINBALL/4kp: on KMSDRM the ndt handed to us is a gbm_device, not an X11/Wayland
+			   display, so eglGetDisplay() cannot classify it. Use the GBM EGL platform explicitly.
+			   Gated on BGFX_USE_GBM=1 (set by VPX) so no other platform changes behaviour.
+			   Ported from evilwraith/bgfx@03f25e9 (branch 4kp_fixes). */
+			m_display = EGL_NO_DISPLAY;
+#	if BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+			{
+				const char* useGbmEnv = getenv("BGFX_USE_GBM");
+				const bool isGbmDevice = (NULL != useGbmEnv && '1' == useGbmEnv[0]);
+				if (isGbmDevice && NULL != ndt)
+				{
+#		ifndef EGL_PLATFORM_GBM_KHR
+#			define EGL_PLATFORM_GBM_KHR 0x31D7
+#		endif
+					typedef EGLDisplay (*PFNEGLGETPLATFORMDISPLAYEXTPROC_LOCAL)(EGLenum, void*, const EGLint*);
+					PFNEGLGETPLATFORMDISPLAYEXTPROC_LOCAL getPlatformDisplayEXT =
+						(PFNEGLGETPLATFORMDISPLAYEXTPROC_LOCAL)eglGetProcAddress("eglGetPlatformDisplayEXT");
+					if (NULL != getPlatformDisplayEXT)
+					{
+						m_display = getPlatformDisplayEXT(EGL_PLATFORM_GBM_KHR, ndt, NULL);
+					}
+				}
+			}
+#	endif // BX_PLATFORM_LINUX || BX_PLATFORM_BSD
+			if (EGL_NO_DISPLAY == m_display)
+			{
+				m_display = eglGetDisplay(NULL == ndt ? EGL_DEFAULT_DISPLAY : ndt);
+			}
 
 			if (EGL_NO_DISPLAY == m_display)
 			{
