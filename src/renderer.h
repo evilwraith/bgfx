@@ -1045,6 +1045,8 @@ namespace bgfx
 			, m_gpuTimer(_gpuTimer)
 			, m_queryIdx(UINT32_MAX)
 			, m_numViewStats(0)
+			, m_viewRun(0)
+			, m_timedRun(cursor() )
 			, m_enabled(0 != (_frame->m_debug & BGFX_DEBUG_PROFILER) )
 			, m_gpuTimerEnabled(_gpuTimerEnabled)
 			, m_inView(false)
@@ -1054,12 +1056,31 @@ namespace bgfx
 		~Profiler()
 		{
 			m_frame->m_perfStats.numViewStats = m_numViewStats;
+			cursor() = 0 == m_viewRun ? 0 : (m_timedRun + 1) % m_viewRun;
+		}
+
+		// Which view to time is advanced by one each frame. Timing every view is not viable on a
+		// tile based GPU: a timestamp between two views sharing a framebuffer stops the driver
+		// merging them into a single render pass, so every boundary becomes a tile flush and
+		// reload. Measured on Mali-G610, that turned a 26 ms frame into multi-second stalls with
+		// audio dropping out. One view per frame costs two timestamps and gives the same
+		// attribution over a handful of frames, which is what a profiler averages over anyway.
+		// A run is one begin(): a view's draws or computes, or one blit.
+		static uint32_t& cursor()
+		{
+			static uint32_t s_cursor = 0;
+			return s_cursor;
 		}
 
 		void begin(uint16_t _view, ViewStatsType::Enum _type)
 		{
-			if (m_enabled
-			&&  m_numViewStats < m_frame->m_numUsedViewStats)
+			const bool timeThisView = m_enabled
+				&& m_numViewStats < m_frame->m_numUsedViewStats
+				&& m_viewRun == m_timedRun
+				;
+			++m_viewRun;
+
+			if (timeThisView)
 			{
 				ViewStats& viewStats   = m_frame->m_perfStats.viewStats[m_numViewStats];
 				viewStats.cpuTimeBegin = bx::getHPCounter();
@@ -1116,6 +1137,7 @@ namespace bgfx
 					const ViewId view = viewStats.view;
 
 					end();
+					--m_viewRun; // the timed run goes on under its new type
 					begin(view, _type);
 				}
 			}
@@ -1141,6 +1163,8 @@ namespace bgfx
 		Ty&      m_gpuTimer;
 		uint32_t m_queryIdx;
 		uint16_t m_numViewStats;
+		uint32_t m_viewRun;
+		uint32_t m_timedRun;
 		bool     m_enabled;
 		bool     m_gpuTimerEnabled;
 		bool     m_inView;
