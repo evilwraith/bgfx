@@ -638,9 +638,21 @@ WL_EGL_IMPORT
 							&&  bb == (EGLint)colorBlockInfo.bBits
 							&&  aa == (EGLint)colorBlockInfo.aBits)
 							{
-								m_config = exact[ii];
-								numConfigs = 1;
-								break;
+								/* Of the exact matches, prefer one whose native visual is DRM ARGB8888 /
+								   XRGB8888 ('AR24' / 'XR24'). Mali lists its ABGR8888 visual first, and the
+								   VOP2 Esmart planes scan those buffers out with red and blue swapped. */
+								EGLint visual = 0;
+								eglGetConfigAttrib(m_display, exact[ii], EGL_NATIVE_VISUAL_ID, &visual);
+								const bool bgrOrder = 0x34325241 == visual || 0x34325258 == visual;
+								if (0 == numConfigs || bgrOrder)
+								{
+									m_config = exact[ii];
+									numConfigs = 1;
+								}
+								if (bgrOrder)
+								{
+									break;
+								}
 							}
 						}
 						if (0 == numConfigs && numExact > 0)
