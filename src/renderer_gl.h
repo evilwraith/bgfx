@@ -1638,6 +1638,7 @@ namespace bgfx { namespace gl
 			: m_id(0)
 			, m_numSamplerTargets(0)
 			, m_constantBuffer(NULL)
+			, m_uniformShadow(NULL)
 			, m_numPredefined(0)
 		{
 			m_instanceData[0] = -1;
@@ -1677,6 +1678,7 @@ namespace bgfx { namespace gl
 		uint8_t m_numSamplerTargets;
 
 		UniformBuffer* m_constantBuffer;
+		uint8_t* m_uniformShadow; // values last sent to this program's uniforms, in m_constantBuffer order
 		PredefinedUniform m_predefined[PredefinedUniform::Count];
 		uint8_t m_numPredefined;
 	};

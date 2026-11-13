@@ -4922,8 +4922,41 @@ namespace bgfx { namespace gl
 			}
 		}
 
-		void commit(UniformBuffer& _uniformBuffer)
+		// Uniform values are GL program state: they stay as last set on the program. A commit walks every
+		// uniform of the program whenever a draw changed any uniform (or the program), so an application
+		// that sets its whole uniform set per draw paid one glUniform* per uniform per draw, nearly all
+		// of them with the value the program already holds. The program keeps a shadow of what was sent
+		// and only differences reach the driver.
+		void commit(ProgramGL& _program)
 		{
+			UniformBuffer& _uniformBuffer = *_program.m_constantBuffer;
+
+			const bool first = NULL == _program.m_uniformShadow;
+			if (first)
+			{
+				uint32_t size = 0;
+				_uniformBuffer.reset();
+				for (;;)
+				{
+					uint32_t opcode = _uniformBuffer.read();
+					if (UniformType::End == opcode)
+					{
+						break;
+					}
+					uint8_t type;
+					uint16_t ignore;
+					uint16_t num;
+					uint16_t copy;
+					UniformBuffer::decodeOpcode(opcode, type, ignore, num, copy);
+					_uniformBuffer.read(copy ? g_uniformTypeSize[type]*num : sizeof(UniformHandle) );
+					_uniformBuffer.read();
+					size += g_uniformTypeSize[type]*num;
+				}
+				_program.m_uniformShadow = (uint8_t*)bx::alloc(g_allocator, bx::max<uint32_t>(size, 1) );
+			}
+
+			uint8_t* shadow = _program.m_uniformShadow;
+
 			_uniformBuffer.reset();
 
 			for (;;)
@@ -4954,6 +4987,16 @@ namespace bgfx { namespace gl
 				}
 
 				uint32_t loc = _uniformBuffer.read();
+
+				const uint32_t dataSize = g_uniformTypeSize[type]*num;
+				uint8_t* const shadowed = shadow;
+				shadow += dataSize;
+				if (!first
+				&&  0 == bx::memCmp(shadowed, data, dataSize) )
+				{
+					continue;
+				}
+				bx::memCopy(shadowed, data, dataSize);
 
 				switch (type)
 				{
@@ -5414,7 +5457,7 @@ namespace bgfx { namespace gl
 
 				if (NULL != program.m_constantBuffer)
 				{
-					commit(*program.m_constantBuffer);
+					commit(program);
 				}
 
 				const uint8_t skipMask = _clear.getColorSkipMask(numMrt);
@@ -5960,6 +6003,11 @@ namespace bgfx { namespace gl
 		{
 			UniformBuffer::destroy(m_constantBuffer);
 			m_constantBuffer = NULL;
+		}
+		if (NULL != m_uniformShadow)
+		{
+			bx::free(g_allocator, m_uniformShadow);
+			m_uniformShadow = NULL;
 		}
 		m_numPredefined = 0;
 
@@ -9991,7 +10039,7 @@ namespace bgfx { namespace gl
 							if (constantsChanged
 							&&  NULL != program.m_constantBuffer)
 							{
-								commit(*program.m_constantBuffer);
+								commit(program);
 							}
 
 							viewState.setPredefined<1>(this, view, *renderView, program, _render, compute);
@@ -10529,7 +10577,7 @@ namespace bgfx { namespace gl
 					if (constantsChanged
 					&&  NULL != program.m_constantBuffer)
 					{
-						commit(*program.m_constantBuffer);
+						commit(program);
 					}
 
 					viewState.setPredefined<1>(this, view, *renderView, program, _render, draw);
