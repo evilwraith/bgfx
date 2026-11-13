@@ -373,9 +373,12 @@ GL_IMPORT______(true,  PFNGLGETTEXTURESUBIMAGEPROC,                glGetTextureS
 GL_IMPORT______(true,  PFNGLGETCOMPRESSEDTEXTURESUBIMAGEPROC,      glGetCompressedTextureSubImage);
 GL_IMPORT______(true,  PFNGLGETQUERYIVPROC,                        glGetQueryiv);
 GL_IMPORT______(true,  PFNGLGETQUERYOBJECTIVPROC,                  glGetQueryObjectiv);
+GL_IMPORT_EXT__(true,  PFNGLGETQUERYOBJECTIVPROC,                  glGetQueryObjectiv);
 GL_IMPORT______(true,  PFNGLGETQUERYOBJECTI64VPROC,                glGetQueryObjecti64v);
+GL_IMPORT_EXT__(true,  PFNGLGETQUERYOBJECTI64VPROC,                glGetQueryObjecti64v);
 GL_IMPORT______(true,  PFNGLGETQUERYOBJECTUIVPROC,                 glGetQueryObjectuiv);
 GL_IMPORT______(true,  PFNGLGETQUERYOBJECTUI64VPROC,               glGetQueryObjectui64v);
+GL_IMPORT_EXT__(true,  PFNGLGETQUERYOBJECTUI64VPROC,               glGetQueryObjectui64v);
 GL_IMPORT______(false, PFNGLGETSHADERIVPROC,                       glGetShaderiv);
 GL_IMPORT______(false, PFNGLGETSHADERINFOLOGPROC,                  glGetShaderInfoLog);
 GL_IMPORT______(false, PFNGLGETSTRINGPROC,                         glGetString);
@@ -407,6 +410,7 @@ GL_IMPORT______(true,  PFNGLPROGRAMPARAMETERIPROC,                 glProgramPara
 GL_IMPORT______(true,  PFNGLPROVOKINGVERTEXPROC,                   glProvokingVertex);
 GL_IMPORT______(true,  PFNGLPUSHDEBUGGROUPPROC,                    glPushDebugGroup);
 GL_IMPORT______(true,  PFNGLQUERYCOUNTERPROC,                      glQueryCounter);
+GL_IMPORT_EXT__(true,  PFNGLQUERYCOUNTERPROC,                      glQueryCounter);
 GL_IMPORT______(true,  PFNGLREADBUFFERPROC,                        glReadBuffer);
 GL_IMPORT______(false, PFNGLREADPIXELSPROC,                        glReadPixels);
 GL_IMPORT______(true,  PFNGLRENDERBUFFERSTORAGEPROC,               glRenderbufferStorage);
