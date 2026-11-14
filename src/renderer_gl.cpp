@@ -11601,6 +11601,17 @@ namespace bgfx { namespace gl
 	}
 } } // namespace bgfx
 
+// FORK PATCH (4kp): isolated per-view GPU timing on the GL backend (see g_profilerIsolate in renderer.h)
+static void bgfxGlProfilerIsolate()
+{
+	glFinish();
+}
+
+extern "C" void bgfx_set_profiler_isolate(bool _isolate)
+{
+	bgfx::g_profilerIsolate = _isolate ? bgfxGlProfilerIsolate : NULL;
+}
+
 #else
 
 namespace bgfx { namespace gl

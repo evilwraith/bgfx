@@ -3459,6 +3459,9 @@ namespace bgfx
 	// already encoded are actually rendered: bgfx pipelines one frame, so the API thread is ahead.
 	static std::atomic<uint32_t> s_renderedFrameNum { 0 };
 
+	// FORK PATCH (4kp): see renderer.h
+	void (*g_profilerIsolate)() = NULL;
+
 	RenderFrame::Enum Context::renderFrame(int32_t _msecs)
 	{
 		BGFX_PROFILER_SCOPE("bgfx::renderFrame", kColorSubmit);
