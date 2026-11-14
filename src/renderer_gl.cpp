@@ -11687,17 +11687,24 @@ namespace bgfx { namespace gl
 			GL_CHECK(glBindVertexArray(0) );
 		}
 	}
-} } // namespace bgfx
+	// FORK PATCH (4kp): isolated per-view GPU timing on the GL backend (see g_profilerIsolate in renderer.h).
+	// Inside the namespace: glFinish here is bgfx's imported entry point. Outside it the call bound to the
+	// system GL library's symbol and libbgfx.so gained a dependency on libOpenGL.so.0, which a GLES-only
+	// device does not have (the application then fails to start).
+	static void profilerIsolate()
+	{
+		GL_CHECK(glFinish() );
+	}
 
-// FORK PATCH (4kp): isolated per-view GPU timing on the GL backend (see g_profilerIsolate in renderer.h)
-static void bgfxGlProfilerIsolate()
-{
-	glFinish();
-}
+	void setProfilerIsolate(bool _isolate)
+	{
+		g_profilerIsolate = _isolate ? profilerIsolate : NULL;
+	}
+} } // namespace bgfx
 
 extern "C" void bgfx_set_profiler_isolate(bool _isolate)
 {
-	bgfx::g_profilerIsolate = _isolate ? bgfxGlProfilerIsolate : NULL;
+	bgfx::gl::setProfilerIsolate(_isolate);
 }
 
 #else
