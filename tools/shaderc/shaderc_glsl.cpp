@@ -256,6 +256,23 @@ namespace bgfx { namespace glsl
 				}
 			}
 
+			// FORK PATCH (4kp): --mediump-samplers. SPIRV-Cross declares every variable that lacks a
+			// RelaxedPrecision decoration highp, samplers included, and shaderc's preprocessor defines the
+			// precision qualifiers away, so a shader cannot ask for anything else. A sampler's precision is
+			// the precision of the lookup, and on a tile-based mobile GPU a highp lookup costs more than a
+			// mediump one: on a Mali-G610 (GLES 3.2) a 13 tap FXAA pass over 1920x1080 took 2.0 ms with
+			// `uniform highp sampler2D` and 1.27 ms with the sampler at low precision, which is what
+			// hand-written GLSL ES gets by default (lowp, 16 bit float on that GPU). Not for shaders that
+			// need more than 16 bit float from a texture (32 bit float or high range depth lookups).
+			if (es
+			&&  _options.mediumpSamplers)
+			{
+				for (const spirv_cross::Resource& resource : resources.sampled_images)
+				{
+					compiler.set_decoration(resource.id, spv::DecorationRelaxedPrecision);
+				}
+			}
+
 			if (es)
 			{
 				bool unsupported = false;

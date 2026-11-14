@@ -179,6 +179,7 @@ namespace bgfx
 		bool backwardsCompatibility;
 		bool warningsAreErrors;
 		bool keepIntermediate;
+		bool mediumpSamplers; // FORK PATCH (4kp): see shaderc_glsl.cpp
 		bool uses16BitTypes;
 
 		bool optimize;
