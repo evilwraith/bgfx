@@ -264,23 +264,6 @@ namespace bgfx { namespace glsl
 				}
 			}
 
-			// FORK PATCH (4kp): --mediump-samplers. SPIRV-Cross declares every variable that lacks a
-			// RelaxedPrecision decoration highp, samplers included, and shaderc's preprocessor defines the
-			// precision qualifiers away, so a shader cannot ask for anything else. A sampler's precision is
-			// the precision of the lookup, and on a tile-based mobile GPU a highp lookup costs more than a
-			// mediump one: on a Mali-G610 (GLES 3.2) a 13 tap FXAA pass over 1920x1080 took 2.0 ms with
-			// `uniform highp sampler2D` and 1.27 ms with the sampler at low precision, which is what
-			// hand-written GLSL ES gets by default (lowp, 16 bit float on that GPU). Not for shaders that
-			// need more than 16 bit float from a texture (32 bit float or high range depth lookups).
-			if (es
-			&&  _options.mediumpSamplers)
-			{
-				for (const spirv_cross::Resource& resource : resources.sampled_images)
-				{
-					compiler.set_decoration(resource.id, spv::DecorationRelaxedPrecision);
-				}
-			}
-
 			if (es)
 			{
 				bool unsupported = false;
@@ -308,8 +291,66 @@ namespace bgfx { namespace glsl
 				}
 			}
 
+			std::string compiled = compiler.compile();
+
+			// FORK PATCH (4kp): --lowp-samplers <name>[,<name>...]. SPIRV-Cross declares every sampler
+			// highp and shaderc's preprocessor defines the precision qualifiers away, so a shader cannot ask
+			// for anything else. A sampler's precision is the precision of the lookup's result, nothing
+			// more: coordinates and every temporary stay highp. Hand-written GLSL ES gets lowp samplers by
+			// default, and on a tile-based mobile GPU the highp lookup costs more: on a Mali-G610 (GLES 3.2)
+			// a 13 tap FXAA pass over an 8 bit 1920x1080 target took 2.0 ms with `uniform highp sampler2D`,
+			// 1.27 ms with that one sampler lowp. Named, not global, on purpose: it is only right for a
+			// sampler whose texture holds no more than the lower precision carries (8 bit colour), and a
+			// RelaxedPrecision decoration would not do, because SPIRV-Cross then lowers the temporaries that
+			// receive the lookups as well.
+			if (es
+			&&  NULL != _options.lowpSamplers)
+			{
+				const std::string names = _options.lowpSamplers;
+				for (size_t begin = 0; begin < names.size(); )
+				{
+					size_t end = names.find(',', begin);
+					end = std::string::npos == end ? names.size() : end;
+					const std::string name = names.substr(begin, end - begin);
+					begin = end + 1;
+
+					if (name.empty() )
+					{
+						continue;
+					}
+
+					bool found = false;
+					const std::string prefix = "uniform highp sampler";
+					const std::string suffix = " " + name + ";";
+					for (size_t pos = compiled.find(prefix); std::string::npos != pos; pos = compiled.find(prefix, pos + 1) )
+					{
+						const size_t eol = compiled.find('\n', pos);
+						const size_t len = (std::string::npos == eol ? compiled.size() : eol) - pos;
+						if (len > suffix.size()
+						&&  0 == compiled.compare(pos + len - suffix.size(), suffix.size(), suffix) )
+						{
+							compiled.replace(pos + 8, 5, "lowp"); // "uniform " is 8, "highp" is 5
+							found = true;
+							break;
+						}
+					}
+
+					if (!found)
+					{
+						bx::write(_messageWriter, &messageErr
+							, "Error: --lowp-samplers: no sampler named '%s' in the generated shader.\n"
+							, name.c_str()
+							);
+						delete program;
+						delete shader;
+						glslang::FinalizeProcess();
+						return false;
+					}
+				}
+			}
+
 			bx::StringBuilder compiledSource;
-			compiledSource.set(toStringView(compiler.compile() ) );
+			compiledSource.set(toStringView(compiled) );
 
 			bx::StringView source = compiledSource.getView();
 

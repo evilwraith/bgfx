@@ -277,7 +277,7 @@ namespace bgfx
 		, backwardsCompatibility(false)
 		, warningsAreErrors(false)
 		, keepIntermediate(false)
-		, mediumpSamplers(false)
+		, lowpSamplers(NULL)
 		, uses16BitTypes(false)
 		, optimize(false)
 		, optimizationLevel(3)
@@ -1086,7 +1086,7 @@ namespace bgfx
 		{ '\0', "prefer-flow-control",     0, NULL,             "Prefer flow control instructions. (DirectX only)"                                },
 		{ '\0', "backwards-compatibility", 0, NULL,             "Enable backwards compatibility. (DirectX only)"                                  },
 		{ '\0', "keep-intermediate",       0, NULL,             "Keep intermediate compilation results. (DirectX only)"                           },
-		{ '\0', "mediump-samplers",        0, NULL,             "Declare samplers mediump instead of highp. (GLSL ES only)"                       },
+		{ '\0', "lowp-samplers",           1, "<names>",        "Comma separated samplers to declare lowp instead of highp. (GLSL ES only)"       },
 	};
 
 	void help(const char* _error = NULL)
@@ -2757,7 +2757,7 @@ namespace bgfx
 			options.backwardsCompatibility = cmdLine.hasArg('\0', "backwards-compatibility");
 			options.warningsAreErrors      = cmdLine.hasArg('\0', "Werror");
 			options.keepIntermediate       = cmdLine.hasArg('\0', "keep-intermediate");
-			options.mediumpSamplers        = cmdLine.hasArg('\0', "mediump-samplers");
+			options.lowpSamplers           = cmdLine.findOption('\0', "lowp-samplers");
 
 			uint32_t optimization = 3;
 			if (cmdLine.hasArg(optimization, 'O') )
