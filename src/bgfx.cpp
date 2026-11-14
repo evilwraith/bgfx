@@ -6,6 +6,7 @@
 #include <bx/platform.h>
 
 #include "bgfx_p.h"
+#include <atomic>
 #include <bgfx/embedded_shader.h>
 #include <bx/file.h>
 #include <bx/mutex.h>
@@ -3562,6 +3563,12 @@ namespace bgfx
 	};
 #endif // BX_PLATFORM_OSX || BX_PLATFORM_IOS || BX_PLATFORM_VISIONOS
 
+	// FORK PATCH (4kp): the number of the frame the render thread last executed, the one bgfx::frame()
+	// returned to the API thread when that frame was submitted. An embedder presenting from the render
+	// thread (after renderFrame() returns) uses it to tell which of the frames the API thread has
+	// already encoded are actually rendered: bgfx pipelines one frame, so the API thread is ahead.
+	static std::atomic<uint32_t> s_renderedFrameNum { 0 };
+
 	RenderFrame::Enum Context::renderFrame(int32_t _msecs)
 	{
 		BGFX_PROFILER_SCOPE("bgfx::renderFrame", kColorSubmit);
@@ -3624,6 +3631,9 @@ namespace bgfx
 
 			m_flipAfterRender = 0 != (m_render->m_reset & BGFX_RESET_FLIP_AFTER_RENDER);
 			m_flushPrevFrame  = m_render->m_flush;
+
+			// FORK PATCH (4kp): see bgfx_get_rendered_frame below
+			s_renderedFrameNum.store(m_render->m_frameNum, std::memory_order_release);
 
 			renderSemPost();
 
@@ -8369,3 +8379,9 @@ namespace bgfx
 } // namespace bgfx
 
 #include "bgfx.idl.inl"
+
+// FORK PATCH (4kp): see s_renderedFrameNum. C linkage so the embedder needs no bgfx header change.
+extern "C" uint32_t bgfx_get_rendered_frame()
+{
+	return bgfx::s_renderedFrameNum.load(std::memory_order_acquire);
+}
