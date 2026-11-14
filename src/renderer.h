@@ -1040,6 +1040,13 @@ namespace bgfx
 		return false;
 	}
 
+	// FORK PATCH (4kp): when set, called right before the two timestamps of a timed view, so the bracket
+	// holds that view's GPU execution alone (the GL backend points it at glFinish; see
+	// bgfx_set_profiler_isolate). Without it a tile-based GPU defers a view's fragment work past the
+	// end timestamp and charges it to whatever is timed next, and numbers from two builds cannot be
+	// compared. Costs a full drain per timed view: a measuring mode, not something to leave on.
+	extern void (*g_profilerIsolate)();
+
 	template<typename Ty>
 	struct Profiler
 	{
@@ -1084,6 +1091,12 @@ namespace bgfx
 				ViewStats& viewStats   = m_frame->m_perfStats.viewStats[m_numViews];
 				viewStats.cpuTimeBegin = bx::getHPCounter();
 
+				if (NULL != g_profilerIsolate
+				&&  m_gpuTimerEnabled)
+				{
+					g_profilerIsolate();
+				}
+
 				m_queryIdx = m_gpuTimerEnabled
 					? m_gpuTimer.begin(_view, m_frame->m_frameNum)
 					: UINT32_MAX
@@ -1110,6 +1123,11 @@ namespace bgfx
 
 				if (UINT32_MAX != m_queryIdx)
 				{
+					if (NULL != g_profilerIsolate)
+					{
+						g_profilerIsolate();
+					}
+
 					m_gpuTimer.end(m_queryIdx);
 
 					const typename Ty::Result& result = m_gpuTimer.m_result[viewStats.view];
