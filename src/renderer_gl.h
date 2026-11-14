@@ -69,6 +69,7 @@ typedef double GLdouble;
 
 #endif // BGFX_CONFIG_RENDERER_OPENGL
 
+#include <stdio.h> // FORK PATCH (4kp): isolateCheck
 #include "renderer.h"
 #include "debug_renderdoc.h"
 #include "emscripten.h"
@@ -1784,10 +1785,27 @@ namespace bgfx { namespace gl
 
 		uint32_t begin(uint32_t _resultIdx, uint32_t _frameNum)
 		{
-			while (0 == m_control.reserve(1) )
+			// FORK PATCH (4kp): bounded. A query whose result never becomes available stays at the head of
+			// the ring; once the ring is full this loop span on glFinish for good, with the application's
+			// render thread in it (seen once in isolate mode on a Mali-G610, in a run where views were
+			// reaching a window swap chain, which has its own GL context and none of these query objects;
+			// not confirmed as the cause). An ended query that four drains do not complete is given up
+			// instead, and its result keeps the previous value.
+			isolateCheck("entering begin");
+			for (uint32_t attempts = 0; 0 == m_control.reserve(1); ++attempts)
 			{
 				if (!update() )
 				{
+					Query& stuck = m_query[m_control.m_read];
+					if (attempts >= 4
+					&&  stuck.m_ready) // ended, and still no result after four drains
+					{
+						--m_result[stuck.m_resultIdx].m_pending;
+						m_control.consume(1);
+						attempts = 0;
+						continue;
+					}
+
 					GL_CHECK(glFinish() );
 				}
 			}
@@ -1817,6 +1835,7 @@ namespace bgfx { namespace gl
 				}
 
 				GL_CHECK(glBeginQuery(GL_TIME_ELAPSED, query.m_elapsed) );
+				isolateCheck("glBeginQuery(TIME_ELAPSED)");
 			}
 			else
 			{
@@ -1837,7 +1856,9 @@ namespace bgfx { namespace gl
 
 			if (query.m_isElapsed)
 			{
+				isolateCheck("the timed view");
 				GL_CHECK(glEndQuery(GL_TIME_ELAPSED) );
+				isolateCheck("glEndQuery(TIME_ELAPSED)");
 			}
 			else
 			{
@@ -1854,6 +1875,23 @@ namespace bgfx { namespace gl
 		bool hasPending() const
 		{
 			return 0 != m_control.getNumUsed();
+		}
+
+		// FORK PATCH (4kp): isolate mode only (a measuring mode). Names the call that left a GL error,
+		// the first few times, on stderr: release builds compile GL_CHECK and BX_TRACE out.
+		static void isolateCheck(const char* _where)
+		{
+			if (s_timerQueryElapsed)
+			{
+				static uint32_t s_reported = 0;
+				for (GLenum err = glGetError(); GL_NO_ERROR != err; err = glGetError() )
+				{
+					if (s_reported++ < 12)
+					{
+						fprintf(stderr, "bgfx isolate timer: GL error 0x%04x after %s\n", err, _where);
+					}
+				}
+			}
 		}
 
 		bool update()
@@ -1888,6 +1926,7 @@ namespace bgfx { namespace gl
 							, GL_QUERY_RESULT
 							, &result.m_end
 							) );
+						isolateCheck("reading a TIME_ELAPSED result");
 						return true;
 					}
 
