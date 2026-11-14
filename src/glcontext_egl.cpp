@@ -1246,6 +1246,14 @@ WL_EGL_IMPORT
 	// embedder's buffers exist) and any fallback still present normally.
 	bool s_skipPresent = false;
 
+	// FORK PATCH (4kp): the same for the swap chains of the other windows, once the embedder presents
+	// every window itself. "A window the embedder has taken over receives no views" holds only as long
+	// as nothing goes wrong: on the HDP (2026-11-14) one render in eight of an owned window still went
+	// to its swap chain, bgfx swapped it, and the compositor showed that buffer and the embedder's in
+	// turn on the same wl_surface, three times a second. With this set such a view still renders, into
+	// a buffer nobody shows.
+	bool s_skipWindowPresent = false;
+
 	void GlContext::swap(SwapChainGL* _swapChain, bool _vsync)
 	{
 		makeCurrent(_swapChain);
@@ -1261,6 +1269,11 @@ WL_EGL_IMPORT
 		}
 		else
 		{
+			if (s_skipWindowPresent)
+			{
+				return;
+			}
+
 			const int swapInterval = _vsync ? m_swapInterval : 0;
 
 			if (swapInterval != _swapChain->m_swapInterval)
@@ -1376,6 +1389,12 @@ WL_EGL_IMPORT
 extern "C" void bgfx_set_skip_present(bool _skip)
 {
 	bgfx::gl::s_skipPresent = _skip;
+}
+
+// FORK PATCH (4kp): see s_skipWindowPresent above
+extern "C" void bgfx_set_skip_window_present(bool _skip)
+{
+	bgfx::gl::s_skipWindowPresent = _skip;
 }
 
 #	endif // BGFX_USE_EGL
