@@ -1710,6 +1710,8 @@ namespace bgfx { namespace gl
 				Query& query = m_query[ii];
 				query.m_ready = false;
 				query.m_frameNum = 0;
+				query.m_elapsed = 0;
+				query.m_isElapsed = false;
 				GL_CHECK(glGenQueries(1, &query.m_begin) );
 				GL_CHECK(glGenQueries(1, &query.m_end) );
 			}
@@ -1722,6 +1724,11 @@ namespace bgfx { namespace gl
 				Query& query = m_query[ii];
 				GL_CHECK(glDeleteQueries(1, &query.m_begin) );
 				GL_CHECK(glDeleteQueries(1, &query.m_end) );
+				if (0 != query.m_elapsed)
+				{
+					GL_CHECK(glDeleteQueries(1, &query.m_elapsed) );
+					query.m_elapsed = 0;
+				}
 			}
 		}
 
@@ -1780,9 +1787,29 @@ namespace bgfx { namespace gl
 			query.m_frameNum = _frameNum;
 			query.m_ready     = false;
 
-			GL_CHECK(glQueryCounter(query.m_begin
-				, GL_TIMESTAMP
-				) );
+			// FORK PATCH (4kp): in isolate mode (bgfx_set_profiler_isolate) a view is timed with one
+			// TIME_ELAPSED query, which on a tile-based GPU counts the GPU's execution time alone. Two
+			// timestamps also count everything the CPU does between them (issuing the draws, the flush,
+			// the wake-up after the drain): a 480x270 blur read 0.7-1.1 ms where the elapsed query of
+			// the same pass reads 0.06 ms (Mali-G610). The frame query (BGFX_CONFIG_MAX_VIEWS) encloses
+			// the views and elapsed queries cannot nest, so it keeps its timestamps. A query object keeps
+			// the target of its first use, hence the third object.
+			query.m_isElapsed = s_timerQueryElapsed && BGFX_CONFIG_MAX_VIEWS != _resultIdx;
+			if (query.m_isElapsed)
+			{
+				if (0 == query.m_elapsed)
+				{
+					GL_CHECK(glGenQueries(1, &query.m_elapsed) );
+				}
+
+				GL_CHECK(glBeginQuery(GL_TIME_ELAPSED, query.m_elapsed) );
+			}
+			else
+			{
+				GL_CHECK(glQueryCounter(query.m_begin
+					, GL_TIMESTAMP
+					) );
+			}
 
 			m_control.commit(1);
 
@@ -1794,9 +1821,16 @@ namespace bgfx { namespace gl
 			Query& query = m_query[_idx];
 			query.m_ready = true;
 
-			GL_CHECK(glQueryCounter(query.m_end
-				, GL_TIMESTAMP
-				) );
+			if (query.m_isElapsed)
+			{
+				GL_CHECK(glEndQuery(GL_TIME_ELAPSED) );
+			}
+			else
+			{
+				GL_CHECK(glQueryCounter(query.m_end
+					, GL_TIMESTAMP
+					) );
+			}
 
 			while (update() )
 			{
@@ -1820,7 +1854,7 @@ namespace bgfx { namespace gl
 				}
 
 				GLuint available;
-				GL_CHECK(glGetQueryObjectuiv(query.m_end
+				GL_CHECK(glGetQueryObjectuiv(query.m_isElapsed ? query.m_elapsed : query.m_end
 					, GL_QUERY_RESULT_AVAILABLE
 					, &available
 					) );
@@ -1832,6 +1866,16 @@ namespace bgfx { namespace gl
 					Result& result = m_result[query.m_resultIdx];
 					--result.m_pending;
 					result.m_frameNum = query.m_frameNum;
+
+					if (query.m_isElapsed)
+					{
+						result.m_begin = 0;
+						GL_CHECK(glGetQueryObjectui64v(query.m_elapsed
+							, GL_QUERY_RESULT
+							, &result.m_end
+							) );
+						return true;
+					}
 
 					GL_CHECK(glGetQueryObjectui64v(query.m_begin
 						, GL_QUERY_RESULT
@@ -1870,10 +1914,14 @@ namespace bgfx { namespace gl
 		{
 			GLuint   m_begin;
 			GLuint   m_end;
+			GLuint   m_elapsed;
 			uint32_t m_resultIdx;
 			uint32_t m_frameNum;
 			bool     m_ready;
+			bool     m_isElapsed;
 		};
+
+		static bool s_timerQueryElapsed;
 
 		TimerResultT<Result> m_result;
 
