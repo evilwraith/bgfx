@@ -11649,9 +11649,12 @@ namespace bgfx { namespace gl
 		GL_CHECK(glFinish() );
 	}
 
+	bool TimerQueryGL::s_timerQueryElapsed = false;
+
 	void setProfilerIsolate(bool _isolate)
 	{
 		g_profilerIsolate = _isolate ? profilerIsolate : NULL;
+		TimerQueryGL::s_timerQueryElapsed = _isolate;
 	}
 } } // namespace bgfx
 
