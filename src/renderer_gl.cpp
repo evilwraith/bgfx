@@ -5053,6 +5053,11 @@ namespace bgfx { namespace gl
 
 				if (cached)
 				{
+					// A binary the application could not return, or one the driver does not take any more
+					// (it may reject a binary for any reason: glProgramBinary then leaves the program
+					// unlinked), is not a cached program: it is linked from its shaders and kept again.
+					cached = false;
+
 					void* data = bx::allocPtr(g_allocatorBlk, length);
 					if (g_callback->cacheRead(_id, data, length) )
 					{
@@ -5062,15 +5067,32 @@ namespace bgfx { namespace gl
 						GLenum format;
 						bx::read(&reader, format, &err);
 
-						GL_CHECK(glProgramBinary(programId, format, reader.getDataPtr(), (GLsizei)reader.remaining() ) );
+						glProgramBinary(programId, format, reader.getDataPtr(), (GLsizei)reader.remaining() );
+
+						GLint linked = 0;
+						glGetProgramiv(programId, GL_LINK_STATUS, &linked);
+						cached = 0 != linked;
+
+						if (!cached)
+						{
+							while (GL_NO_ERROR != glGetError() ) {}
+							BX_TRACE("Program binary %016" PRIx64 " rejected by the driver, linking.", _id);
+						}
 					}
 
 					bx::freePtr(data);
 				}
 
-#if BGFX_CONFIG_RENDERER_OPENGL
-				GL_CHECK(glProgramParameteri(programId, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE) );
-#endif // BGFX_CONFIG_RENDERER_OPENGL
+				// OpenGL ES 3 has the hint as well, and without it some drivers (Arm Mali) report a program
+				// binary length of zero, so nothing was ever handed to cacheWrite there.
+				if (BX_ENABLED(BGFX_CONFIG_RENDERER_OPENGL)
+				||  BX_ENABLED(BGFX_CONFIG_RENDERER_OPENGLES >= 30) )
+				{
+					if (NULL != glProgramParameteri)
+					{
+						GL_CHECK(glProgramParameteri(programId, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE) );
+					}
+				}
 			}
 
 			return cached;
